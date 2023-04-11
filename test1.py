@@ -1,6 +1,7 @@
 import os
 import wave
 import time
+import json
 import math
 import openai
 import struct
@@ -24,9 +25,17 @@ CHANNELS = 1
 RATE = 16000
 swidth = 2
 
-TIMEOUT_LENGTH = 5
+TIMEOUT_LENGTH = 3
 
-f_name_directory = r'.\audio'
+audio_name_directory = r'.\audio'
+convo_name_directory = r'.\conversations'
+
+conversation_context = [
+    {
+        "role": "system", 
+        "content": "You are GlaedeBot, an AI-driven desk robot that makes sarcastic jokes and observations based on the user's input. You have the personality of Chandler Bind from Friends and Barney Stinson from HIMYM."
+    },
+]
 
 class Recorder:
 
@@ -69,9 +78,9 @@ class Recorder:
         self.write(b''.join(rec))
 
     def write(self, recording):
-        n_files = len(os.listdir(f_name_directory))
+        n_files = len(os.listdir(audio_name_directory))
 
-        filename = os.path.join(f_name_directory, '{}.wav'.format(n_files))
+        filename = os.path.join(audio_name_directory, '{}.wav'.format(n_files))
         print('Filename: {}'.format(filename))
 
         wf = wave.open(filename, 'wb')
@@ -80,18 +89,19 @@ class Recorder:
         wf.setframerate(RATE)
         wf.writeframes(recording)
         wf.close()
-
-        audio_file= open(filename, "rb")
-        # options = whisper.DecodingOptions(without_timestamps=True, fp16 = False)
-        transcript = openai.Audio.transcribe(
-            "whisper-1", 
-            audio_file, 
-            # options
-        )
-        print('Transcript: {}'.format(transcript))
-
         print('Written to file: {}'.format(filename))
         print('Returning to listening')
+
+        self.transcribe(filename)
+
+    def convo(self):
+        filename = os.path.join(convo_name_directory, 'convo.json')
+        print('Filename: {}'.format(filename))
+
+        with open(filename, "w") as outfile:
+            json.dump(conversation_context, outfile)
+        
+        print('Save convo')
 
     def listen(self):
         print('Listening beginning')
@@ -99,8 +109,38 @@ class Recorder:
             input = self.stream.read(chunk)
             rms_val = self.rms(input)
             if rms_val > Threshold:
+                self.convo()
                 self.record()
 
-a = Recorder()
+    def transcribe(self, filename):
+        print('Transcribing..')
 
+        audio_file= open(filename, "rb")
+        # options = whisper.DecodingOptions(language="en", without_timestamps=True, fp16 = False)
+        transcript = openai.Audio.transcribe(
+            "whisper-1", 
+            audio_file, 
+            language="en"
+            # options
+        )
+        transcript_text = transcript["text"]
+        print('Transcript: {}'.format(transcript_text))
+
+        conversation_context.append({"role": "user", "content": transcript_text})
+        self.response(transcript_text)
+
+    def response(self, transcript):
+        print('Responding..')
+
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=conversation_context
+        )
+        response_text = response["choices"][0]["message"]["content"]
+        print('Response: {}'.format(response_text))
+
+        conversation_context.append({"role": "assistant", "content": response_text})
+        self.listen()
+
+a = Recorder()
 a.listen()
