@@ -1,14 +1,19 @@
 # region Packages 
+import re
 import os
+import csv
 import wave
 import time
 import json
 import math
+import boto3
 import openai
 import struct
 import whisper
 import pyaudio
+import pandas as pd
 from dotenv import main
+from datetime import datetime, timedelta
 # endregion
 
 # region Vars
@@ -28,9 +33,7 @@ FORMAT = pyaudio.paInt16
 # Path for audio and conversations
 audio_name_directory = r'.\audio'
 convo_name_directory = r'.\conversations'
-
-# API Key Auth
-# openai.api_key = gpt3_api_key
+tasks_name_directory = r'.\tasks'
 
 # Prompt for transcribing
 prompt = "MIA Food log entry. Rice 200 grams. End."
@@ -44,7 +47,7 @@ conversation_context = []
 # region Class
 class GPT:
     def __init__(self):
-        self.openai.api_key = gpt3_api_key
+        openai.api_key = gpt3_api_key
 
     def chatgptcall(self, text):
         print('Making GPT request..')
@@ -71,6 +74,77 @@ class GPT:
         transcript_text = transcript["text"]
         print(f'Transcript: {transcript_text}\n')
         return transcript_text
+
+class Tasks:
+    def __init__(self):
+        self.s3_client = boto3.client('s3')
+
+        # Check if tasks folder exists else create it
+        if not os.path.exists(tasks_name_directory):
+            os.makedirs(tasks_name_directory)
+            
+        self.create_file_at_path(tasks_name_directory, "weight_log.csv", ['Date', 'Weight (kg)'])
+        self.create_file_at_path(tasks_name_directory, "sizes_log.csv", ['Date', 'Chest (in)', 'Waist (in)', 'Bicep (in)', 'Thigh (in)'])
+        self.create_file_at_path(tasks_name_directory, "selfcare_log.csv", ['Date', 'ShowerTime', 'Routine'])
+        self.create_file_at_path(tasks_name_directory, "office_visits_log.csv", ['Date', 'Visited?'])
+
+    def create_file_at_path(self, path, filename, headerlist):
+        full_path = os.path.join(path, filename)
+        if os.path.isfile(full_path):
+            print("File already exists!")
+        else:
+            start_date = datetime(datetime.now().year, 1, 1)
+            end_date = start_date + timedelta(days=365*5) - timedelta(days=1)
+            date_list = [start_date + timedelta(days=x) for x in range((end_date-start_date).days + 1)]
+            with open(full_path, mode='w', newline='') as csv_file:
+                writer = csv.writer(csv_file)
+                writer.writerow(headerlist)
+                for date in date_list:
+                    writer.writerow([date.strftime('%d-%m-%Y')])
+            print(f"Created file {full_path}")
+
+    def makelogentry(self, transcribedtext):
+        #TODO: Instead of using static conditions just use ChatGPT to confirm wheather the user's command is regarding logging their weight 
+        #TODO: Help model understand difference between today/tomorrow/yesterday and fill date accordingly
+        if 'log' in transcribedtext and 'entry' in transcribedtext:
+            print(f'User asked to make log entry\n')
+            if 'weight' in transcribedtext:
+                self.weightlog(transcribedtext)
+    
+    def weightlog(self, transcribedtext):
+        print(f'User asked to make WEIGHT entry\n')
+
+        bucket_name = 'nik-bank-data'
+        filename = "weight_log.csv"
+        full_path = os.path.join(tasks_name_directory, filename)
+
+        regex = r'(\d+(?:\.\d+)?)\s*(kg|KG|Kg|kG)?'
+        matches = re.findall(regex, transcribedtext, re.IGNORECASE)
+        if not matches:
+            return None
+        print(f'extract_weight: {matches[0][0]}\n')
+
+        today_date = datetime.now().strftime('%d-%m-%Y')
+        today_weight = float(matches[0][0])
+
+        print(f'Writing date: {today_date} and weight: {today_weight} to CSV..\n')
+
+        dates_df = pd.read_csv(full_path)
+        dates_df['Date'] = pd.to_datetime(dates_df['Date'], format='%d-%m-%Y', errors='coerce')
+
+        todays_weight_df = pd.DataFrame({'Date': [today_date], 'Weight (kg)': [today_weight]})
+        todays_weight_df['Date'] = pd.to_datetime(todays_weight_df['Date'], format='%d-%m-%Y', errors='coerce')
+
+        merged_df = pd.merge(dates_df, todays_weight_df, on='Date', how='left')
+        # merged_df.drop('Weight (kg)_x', axis=1, inplace=True)
+        # merged_df.rename(columns={'Weight (kg)_y': 'Weight'}, inplace=True)
+
+        merged_df.to_csv(full_path, index=False)
+        print(f'Wrote date and weight data!\n')
+
+        #FIXME: Setup permissions/IAM roles to write to S3 bucket
+        self.s3_client.upload_file(full_path, bucket_name, filename)
+        print(f'Uploaded to S3!\n')
 
 class Recorder:
     @staticmethod
@@ -110,12 +184,14 @@ class Recorder:
             print(f'Summarized_prompt: {summarized_prompt}\n')
             
             past_convo_summary = g.chatgptcall([{"role": "system", "content": summarized_prompt},])
-            conversation_context.append([{"role": "system", "content": system_context}, {"role": "assistant", "content": past_convo_summary}])
+            conversation_context = [{"role": "system", "content": system_context}, {"role": "assistant", "content": past_convo_summary}]
+            # conversation_context.append({"role": "system", "content": system_context})
             # conversation_context.append({"role": "assistant", "content": past_convo_summary})
             self.saveconversation(conversation_context)
         else:
             print('No past conversations to load from!')
-            conversation_context.append({"role": "system", "content": system_context})
+            conversation_context = [{"role": "system", "content": system_context}]
+            # conversation_context.append({"role": "system", "content": system_context})
         
         print(f'Conversation_context: {conversation_context}\n')
         g.chatgptcall(conversation_context)
@@ -172,13 +248,9 @@ class Recorder:
     def transcribe(self, filename):
         print('Transcribing..')
 
-        transcribe_output = g.transcribe(filename)
-        print(f'Transcript: {transcribe_output}\n')
-
         # Condition to check if user asked to make a log entry. If yes, check type of request
-        if 'log' in transcribe_output and 'entry' in transcribe_output:
-            print(f'User asked to make log entry\n')
-            self.makelogentry(transcribe_output)
+        transcribe_output = g.whispercall(filename)
+        t.makelogentry(transcribe_output)
 
         conversation_context.append({"role": "user", "content": transcribe_output})
         self.saveconversation(conversation_context)
@@ -193,6 +265,7 @@ class Recorder:
 # endregion
 
 # region Main
+t = Tasks()
 g = GPT()
 a = Recorder()
 a.loadconversation()
