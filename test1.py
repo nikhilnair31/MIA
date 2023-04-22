@@ -49,15 +49,16 @@ class GPT:
     def __init__(self):
         openai.api_key = gpt3_api_key
 
-    def chatgptcall(self, text):
+    def chatgptcall(self, text, temp=0.7):
         print('Making GPT request..')
 
         response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
-            messages=text
+            messages=text,
+            temperature=temp
         )
         response_text = response["choices"][0]["message"]["content"]
-        print(f'Response: {response_text}\n')
+        print(f'Response:\n{response_text}\n')
         return response_text
 
     def whispercall(self, filename):
@@ -103,6 +104,35 @@ class Tasks:
                     writer.writerow([date.strftime('%d-%m-%Y')])
             print(f"Created file {full_path}")
 
+    def checkifrequesttype(self, transcribedtext):
+        requesttype = gptObj.chatgptcall(
+            [{
+                "role": "system", 
+                "content": '''
+                    You will receive a user's transcribed speech and are to determine which of the following categories it belongs to. Can belong to more than 1 category. If it does then return Y followed by the category itself, else return N. 
+                    Categories:
+                    1. Weight: Something regarding user's weight
+                    2. Body Measurement: Something regarding user's body measurement
+                    3. Shower: Something regarding user's shower or haircare
+                    4. WFO: Something regarding user working from office
+                    Following is the transcription:'''
+                +
+                transcribedtext
+            }],
+            0
+        ).lower()
+        print(f'Request type:\n{requesttype}\n')
+        
+        if 'y' in requesttype:
+            if 'weight' in requesttype:
+                print(f'weight entry: {requesttype}\n')
+            if 'body measurement' in requesttype:
+                print(f'body measurement entry: {requesttype}\n')
+            if 'shower' in requesttype:
+                print(f'haircare entry: {requesttype}\n')
+            if 'wfo' in requesttype:
+                print(f'wfo entry: {requesttype}\n')
+
     def makelogentry(self, transcribedtext):
         #TODO: Instead of using static conditions just use ChatGPT to confirm wheather the user's command is regarding logging their weight 
         #TODO: Help model understand difference between today/tomorrow/yesterday and fill date accordingly
@@ -146,7 +176,18 @@ class Tasks:
         self.s3_client.upload_file(full_path, bucket_name, filename)
         print(f'Uploaded to S3!\n')
 
-class Recorder:
+class Audio:
+    def __init__(self):
+        self.p = pyaudio.PyAudio()
+        self.stream = self.p.open(
+            format=FORMAT,
+            channels=CHANNELS,
+            rate=RATE,
+            input=True,
+            output=True,
+            frames_per_buffer=chunk
+        )
+    
     @staticmethod
     def rms(frame):
         count = len(frame) / swidth
@@ -161,43 +202,8 @@ class Recorder:
 
         return rms * 1000
 
-    def __init__(self):
-        self.p = pyaudio.PyAudio()
-        self.stream = self.p.open(format=FORMAT,
-                                  channels=CHANNELS,
-                                  rate=RATE,
-                                  input=True,
-                                  output=True,
-                                  frames_per_buffer=chunk)
-    
-    def loadconversation(self):
-        filename = os.path.join(convo_name_directory, 'convo.json')
-        print(f'Conversation Filename: {filename}\n')
-
-        past_conversations = json.load(open(filename))
-
-        # FIXME: Fix how context of previous conversations is loaded and initiate with a greeting
-        if any('user' in d['role'] for d in past_conversations):
-            print('Loaded past conversations\n')
-
-            summarized_prompt = system_context + summarize_context + str(past_conversations)
-            print(f'Summarized_prompt: {summarized_prompt}\n')
-            
-            past_convo_summary = g.chatgptcall([{"role": "system", "content": summarized_prompt},])
-            conversation_context = [{"role": "system", "content": system_context}, {"role": "assistant", "content": past_convo_summary}]
-            # conversation_context.append({"role": "system", "content": system_context})
-            # conversation_context.append({"role": "assistant", "content": past_convo_summary})
-            self.saveconversation(conversation_context)
-        else:
-            print('No past conversations to load from!')
-            conversation_context = [{"role": "system", "content": system_context}]
-            # conversation_context.append({"role": "system", "content": system_context})
-        
-        print(f'Conversation_context: {conversation_context}\n')
-        g.chatgptcall(conversation_context)
-
     def listen(self):
-        print('Listening beginning')
+        print('Listening beginning...')
         while True:
             input = self.stream.read(chunk)
             rms_val = self.rms(input)
@@ -205,7 +211,7 @@ class Recorder:
                 self.record()
 
     def record(self):
-        print('Noise detected, recording beginning')
+        print('Noise detected, recording beginning!')
         rec = []
         current = time.time()
         end = time.time() + TIMEOUT_LENGTH
@@ -218,13 +224,13 @@ class Recorder:
             current = time.time()
             rec.append(data)
         
-        self.write(b''.join(rec))
+        self.writeaudiofile(b''.join(rec))
 
-    def write(self, recording):
+    def writeaudiofile(self, recording):
         n_files = len(os.listdir(audio_name_directory))
 
         filename = os.path.join(audio_name_directory, '{}.wav'.format(n_files))
-        print('Filename: {}'.format(filename))
+        print(f'Writeaudiofile Filename: {filename}\n')
 
         wf = wave.open(filename, 'wb')
         wf.setnchannels(CHANNELS)
@@ -232,42 +238,71 @@ class Recorder:
         wf.setframerate(RATE)
         wf.writeframes(recording)
         wf.close()
-        print('Written to file: {}'.format(filename))
+        print(f'Written to file: {filename}\n')
 
         self.transcribe(filename)
 
-    def saveconversation(self, conversationjson):
-        filename = os.path.join(convo_name_directory, 'convo.json')
-        print('Filename: {}'.format(filename))
-
-        with open(filename, "w") as outfile:
-            json.dump(conversationjson, outfile)
-        
-        print('Save convo')
-
     def transcribe(self, filename):
-        print('Transcribing..')
+        print('Transcribing...')
 
-        # Condition to check if user asked to make a log entry. If yes, check type of request
-        transcribe_output = g.whispercall(filename)
-        t.makelogentry(transcribe_output)
+        # Condition to check if user asked to make audioObj log entry. If yes, check type of request
+        transcribe_output = gptObj.whispercall(filename)
+        taskObj.checkifrequesttype(transcribe_output)
 
         conversation_context.append({"role": "user", "content": transcribe_output})
-        self.saveconversation(conversation_context)
+        convObj.saveconversation(conversation_context)
         self.response(conversation_context)
 
     def response(self, conversation_context):
         print('Responding..')
 
-        conversation_context.append({"role": "assistant", "content": g.chatgptcall(conversation_context)})
-        self.saveconversation(conversation_context)
+        conversation_context.append({"role": "assistant", "content": gptObj.chatgptcall(conversation_context)})
+        convObj.saveconversation(conversation_context)
         self.listen()
+
+class Conversations:
+    def __init__(self):
+        filename = os.path.join(convo_name_directory, 'convo.json')
+        print(f'Conversation Filename: {filename}\n')
+
+        past_conversations = json.load(open(filename))
+
+        # FIXME: Fix how context of previous conversations is loaded and initiate with audioObj greeting
+        if any('user' in d['role'] for d in past_conversations):
+            print('Loaded past conversations\n')
+
+            summarized_prompt = system_context + summarize_context + str(past_conversations)
+            print(f'Summarized_prompt: {summarized_prompt}\n')
+            
+            past_convo_summary = gptObj.chatgptcall([{"role": "system", "content": summarized_prompt},])
+            conversation_context = [{"role": "system", "content": system_context}, {"role": "assistant", "content": past_convo_summary}]
+            # conversation_context.append({"role": "system", "content": system_context})
+            # conversation_context.append({"role": "assistant", "content": past_convo_summary})
+            self.saveconversation(conversation_context)
+        else:
+            print('No past conversations to load from!')
+            conversation_context = [{"role": "system", "content": system_context}]
+            # conversation_context.append({"role": "system", "content": system_context})
+        
+        print(f'Conversation_context: {conversation_context}\n')
+        gptObj.chatgptcall(conversation_context)
+
+    def saveconversation(self, conversationjson):
+        filename = os.path.join(convo_name_directory, 'convo.json')
+        print(f'Saveconversation Filename: {filename}\n')
+
+        with open(filename, "w") as outfile:
+            json.dump(conversationjson, outfile)
+        
+        print('Saved Conversation!')
+
 # endregion
 
 # region Main
-t = Tasks()
-g = GPT()
-a = Recorder()
-a.loadconversation()
-a.listen()
+gptObj = GPT()
+taskObj = Tasks()
+convObj = Conversations()
+audioObj = Audio()
+
+audioObj.listen()
 # endregion
