@@ -40,24 +40,49 @@ prompt = "MIA Food log entry. Rice 200 grams. End."
 
 # Conversations
 summarize_context = "The following is your context of the previous conversation with the user: "
-system_context = "You are MIA, an AI desk robot that makes sarcastic jokes and observations. You have the personality of Chandler Bing from Friends and Barney Stinson from HIMYM. Initiate with a greeting. Never break character."
-conversation_context = []
+system_context = "You are MIA, an AI desk robot that makes sarcastic jokes and observations. You have the personality of Chandler Bing from Friends and Barney Stinson from HIMYM. Initiate with a greeting."
 # endregion
 
 # region Class
 class GPT:
     def __init__(self):
         openai.api_key = gpt3_api_key
+    
+    def gpt3call(self, text, temp=0.7, maxtokens=256):
+        print('Making GPT-3 request..\n')
+        
+        print(f'GPT-3 Call: {text}\n')
 
-    def chatgptcall(self, text, temp=0.7):
-        print('Making GPT request..')
+        plaintext = ''
+        for conv in text:
+            if 'system' in conv['role']:
+                plaintext += conv['content'] + '\n'
+            if 'assistant' in conv['role']:
+                plaintext += 'assistant: ' + conv['content'] + '\n'
+            if 'user' in conv['role']:
+                plaintext += 'user: ' + conv['content'] + '\n'
+        print(f'GPT-3 Prompt:\n{plaintext}\n')
+
+        response = openai.Completion.create(
+            engine="text-davinci-003",
+            prompt=plaintext,
+            temperature=temp,
+            max_tokens=maxtokens
+        )
+        response_text = response["choices"][0].text.lower()
+        print(f'GPT-3 Response:\n{response_text}\n')
+        return response_text
+
+    def chatgptcall(self, text, temp=0.7, maxtokens=256):
+        print('Making ChatGPT request..\n')
 
         response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
             messages=text,
-            temperature=temp
+            temperature=temp,
+            max_tokens=maxtokens
         )
-        response_text = response["choices"][0]["message"]["content"]
+        response_text = response["choices"][0]["message"]["content"].lower()
         print(f'Response:\n{response_text}\n')
         return response_text
 
@@ -120,8 +145,7 @@ class Tasks:
                 transcribedtext
             }],
             0
-        ).lower()
-        print(f'Request type:\n{requesttype}\n')
+        )
         
         if 'y' in requesttype:
             if 'weight' in requesttype:
@@ -132,7 +156,10 @@ class Tasks:
                 print(f'haircare entry: {requesttype}\n')
             if 'wfo' in requesttype:
                 print(f'wfo entry: {requesttype}\n')
+        else:
+            print(f'No request type identified. Please try again.\n')
 
+    # FIXME: Rewrite this
     def makelogentry(self, transcribedtext):
         #TODO: Instead of using static conditions just use ChatGPT to confirm wheather the user's command is regarding logging their weight 
         #TODO: Help model understand difference between today/tomorrow/yesterday and fill date accordingly
@@ -141,6 +168,7 @@ class Tasks:
             if 'weight' in transcribedtext:
                 self.weightlog(transcribedtext)
     
+    # FIXME: Rewrite this
     def weightlog(self, transcribedtext):
         print(f'User asked to make WEIGHT entry\n')
 
@@ -203,7 +231,7 @@ class Audio:
         return rms * 1000
 
     def listen(self):
-        print('Listening beginning...')
+        print(f'Listening beginning...\n')
         while True:
             input = self.stream.read(chunk)
             rms_val = self.rms(input)
@@ -211,7 +239,7 @@ class Audio:
                 self.record()
 
     def record(self):
-        print('Noise detected, recording beginning!')
+        print(f'Noise detected, recording beginning!\n')
         rec = []
         current = time.time()
         end = time.time() + TIMEOUT_LENGTH
@@ -230,7 +258,6 @@ class Audio:
         n_files = len(os.listdir(audio_name_directory))
 
         filename = os.path.join(audio_name_directory, '{}.wav'.format(n_files))
-        print(f'Writeaudiofile Filename: {filename}\n')
 
         wf = wave.open(filename, 'wb')
         wf.setnchannels(CHANNELS)
@@ -245,29 +272,48 @@ class Audio:
     def transcribe(self, filename):
         print('Transcribing...')
 
-        # Condition to check if user asked to make audioObj log entry. If yes, check type of request
+        # Transcribe the user's speech
         transcribe_output = gptObj.whispercall(filename)
+        
+        # Use that transcription and check if it contains any task request and if so which?
         taskObj.checkifrequesttype(transcribe_output)
 
-        conversation_context.append({"role": "user", "content": transcribe_output})
-        convObj.saveconversation(conversation_context)
-        self.response(conversation_context)
+        # Append user's transcribed speech to the conversation
+        convObj.conversation_context.append({"role": "user", "content": transcribe_output})
+        
+        # Save the current conversation
+        convObj.saveconversation()
+        
+        # Respond to user's transcribed speech
+        self.response()
 
-    def response(self, conversation_context):
+    def response(self):
         print('Responding..')
 
-        conversation_context.append({"role": "assistant", "content": gptObj.chatgptcall(conversation_context)})
-        convObj.saveconversation(conversation_context)
+        # Transcribe the user's speech
+        gptresponse = gptObj.chatgptcall(convObj.conversation_context)
+        
+        # If the phrase 'ai language model' shows up in a response then revert to GPT-3 to get a new response 
+        if 'ai language model' in gptresponse.lower():
+            gptresponse = gptObj.gpt3call(convObj.conversation_context)
+
+        # Append GPT's response to the conversation
+        convObj.conversation_context.append({"role": "assistant", "content": gptresponse})
+        
+        # Save the current conversation
+        convObj.saveconversation()
+
         self.listen()
 
 class Conversations:
     def __init__(self):
+        self.conversation_context = []
+
         filename = os.path.join(convo_name_directory, 'convo.json')
         print(f'Conversation Filename: {filename}\n')
 
         past_conversations = json.load(open(filename))
 
-        # FIXME: Fix how context of previous conversations is loaded and initiate with audioObj greeting
         if any('user' in d['role'] for d in past_conversations):
             print('Loaded past conversations\n')
 
@@ -275,27 +321,22 @@ class Conversations:
             print(f'Summarized_prompt: {summarized_prompt}\n')
             
             past_convo_summary = gptObj.chatgptcall([{"role": "system", "content": summarized_prompt},])
-            conversation_context = [{"role": "system", "content": system_context}, {"role": "assistant", "content": past_convo_summary}]
-            # conversation_context.append({"role": "system", "content": system_context})
-            # conversation_context.append({"role": "assistant", "content": past_convo_summary})
-            self.saveconversation(conversation_context)
+            self.conversation_context = [{"role": "system", "content": system_context}, {"role": "assistant", "content": past_convo_summary}]
         else:
             print('No past conversations to load from!')
-            conversation_context = [{"role": "system", "content": system_context}]
-            # conversation_context.append({"role": "system", "content": system_context})
+            self.conversation_context = [{"role": "system", "content": system_context}]
         
-        print(f'Conversation_context: {conversation_context}\n')
-        gptObj.chatgptcall(conversation_context)
+        print(f'Conversation_context: {self.conversation_context}\n')
+        self.saveconversation()
 
-    def saveconversation(self, conversationjson):
+    def saveconversation(self):
         filename = os.path.join(convo_name_directory, 'convo.json')
         print(f'Saveconversation Filename: {filename}\n')
 
         with open(filename, "w") as outfile:
-            json.dump(conversationjson, outfile)
+            json.dump(self.conversation_context, outfile)
         
-        print('Saved Conversation!')
-
+        print('Saved Conversation!\n')
 # endregion
 
 # region Main
