@@ -47,18 +47,6 @@ system_context = "You are MIA, an AI desk robot that makes sarcastic jokes and o
 
 # region Class
 class General:
-    def get_timetext(self, text):
-        timetext_pattern = re.compile(r"(today|tomorrow|day after|yesterday|day before)", re.IGNORECASE)
-
-        timetext_match = timetext_pattern.search(text)
-        if timetext_match:
-            time_text = timetext_match.group().lower()
-            # print("Time:", time_text)
-        else:
-            print("No date found")
-
-        return time_text
-
     def get_weight(self, text):
         weight_pattern = re.compile(r"\d+(\.\d+)?")
 
@@ -71,21 +59,57 @@ class General:
 
         return weight_text
 
-    def get_date(self, time_text):
+    def get_shower_product_combo(self, text):
+        haircare_pattern = re.compile(r"(shampoo(\s+and\s+conditioner)?|conditioner)(\s+only)?|no\s+products", re.IGNORECASE)
+
+        haircare_match = haircare_pattern.search(text)
+        if haircare_match:
+            haircare_text = haircare_match.group().lower()
+            print("Haircare:", haircare_text)
+        else:
+            print("No haircare products found")
+
+        return haircare_text
+
+    def get_morningevening_etc(self, text):
+        timetext_pattern = re.compile(r"(morning|evening)", re.IGNORECASE)
+
+        timetext_match = timetext_pattern.search(text)
+        if timetext_match:
+            time_text = timetext_match.group().lower()
+            print("Time:", time_text)
+        else:
+            print("No date found")
+
+        return time_text
+
+    def get_date(self, text):
+        timetext_pattern = re.compile(r"(today|tomorrow|day after|yesterday|day before)", re.IGNORECASE)
+        timetext_match = timetext_pattern.search(text)
+        
         today = datetime.today().date()
         tomorrow = today + timedelta(days=1)
         dayafter = today + timedelta(days=2)
         yesterday = today - timedelta(days=1)
         daybefore = today - timedelta(days=2)
         date_dict = {
+            'morning': today,
+            'evening': today,
             'today': today,
             'tomorrow': tomorrow,
             'day after': dayafter,
             'yesterday': yesterday,
             'day before': daybefore,
         }
-        # print(f'get_date: {date_dict[time_text.lower()]}\n')
-        return date_dict[time_text.lower()].strftime('%d-%m-%Y')
+
+        if timetext_match:
+            time_text = timetext_match.group().lower()
+            date_text = date_dict[time_text.lower()].strftime('%d-%m-%Y')
+            print(f'Time: {time_text} - Date: {date_text}\n')
+        else:
+            print("No date found")
+
+        return date_text
 
 class Sheets:
     def __init__(self):
@@ -159,7 +183,6 @@ class GPT:
         print('Making Whisper request..')
 
         audio_file= open(filename, "rb")
-        # options = whisper.DecodingOptions(language="en", without_timestamps=True, fp16 = False)
         transcript = openai.Audio.transcribe(
             "whisper-1", 
             audio_file, 
@@ -256,9 +279,10 @@ class Tasks:
                 transcribedtext
             }],
             0,
+            256,
             False
         ).lower()
-        date_val = genObj.get_date(genObj.get_timetext(dateandweighttext))
+        date_val = genObj.get_date(dateandweighttext)
         weight_val = genObj.get_weight(dateandweighttext)
         print(f'dateandweighttext: {dateandweighttext}\n date: {date_val} - weight: {weight_val}\n')
 
@@ -306,51 +330,55 @@ class Tasks:
             [{
                 "role": "system", 
                 "content": '''
-                    You will receive a user's transcribed speech and are to determine the date of request, the time of shower and the haircare products used. 
+                    You will receive a user's transcribed speech and are to determine the date of request, time of shower and haircare products used. 
                     If date of shower not mentioned assume it was today. 
-                    If time of shower not mentioned assume it was at 11:00 AM. 
-                    If haircare products not mentioned assume it was Shampoo and Conditioner.
+                    If time of shower not mentioned assume it was morning. 
+                    If haircare products not mentioned assume it was Shampoo + Conditioner.
                     Example input: I just showered and used both shampoo and conditioner 
-                    Example output: today - 11:00 AM - Shampoo and Conditioner. 
+                    Example output: today - Morning - Shampoo and Conditioner. 
                     Following is the transcription:'''
                 +
                 transcribedtext
             }],
             0,
+            256,
             False
         ).lower()
-        date_val, time_val, haircare_val = genObj.get_date_and_weight(datetimeshower)
+        time_val = genObj.get_morningevening_etc(datetimeshower)
+        date_val = genObj.get_date(datetimeshower)
+        haircare_val = genObj.get_shower_product_combo(datetimeshower)
         print(f'datetimeshower: {datetimeshower}\n date: {date_val} - time: {time_val} - haircare: {haircare_val}\n')
 
-        # If error like "No date found" AND "No weight found" then end function here
+        # If error like "No XYZ found" then end function here
         if "no" in [date_val, time_val, haircare_val]:
             print(f'Shower sheet not updated.\n')
             return 
         
         # read csv at path and convert to df
-        weightcsv_df = pd.read_csv(shower_csv_file_path)
-        print(f'Local weight csv:\n{weightcsv_df.columns.tolist()}\n{weightcsv_df.dtypes}\n{weightcsv_df}\n')
+        showercsv_df = pd.read_csv(shower_csv_file_path)
+        print(f'Local shower csv:\n{showercsv_df.columns.tolist()}\n{showercsv_df.dtypes}\n{showercsv_df}\n')
 
         # Set the index of the dataframe to the 'Date' column
         # Check if the date exists in the index
-        weightcsv_df = weightcsv_df.set_index('Date')
-        if date_val in weightcsv_df.index:
-            print(f'Date exists in Local weight csv\n')
-            weightcsv_df.loc[date_val, 'Weight  '] = weight_val
+        showercsv_df = showercsv_df.set_index('Date')
+        if date_val in showercsv_df.index:
+            print(f'Date exists in Local shower csv\n')
+            showercsv_df.loc[date_val, 'Time'] = time_val
+            showercsv_df.loc[date_val, 'Haircare'] = haircare_val
         else:
-            print(f'Date does NOT exist in Local weight csv\n')
-            new_row = pd.DataFrame({'Weight  ': weight_val}, index=[date_val])
-            weightcsv_df = pd.concat([weightcsv_df, new_row])
+            print(f'Date does NOT exist in Local shower csv\n')
+            new_row = pd.DataFrame({'Time': time_val, 'Haircare': haircare_val}, index=[date_val])
+            showercsv_df = pd.concat([showercsv_df, new_row])
         
         # Reset the index of the dataframe and replace NaN values with ''
-        weightcsv_df = weightcsv_df.reset_index()
-        weightcsv_df = weightcsv_df.fillna('')
+        showercsv_df = showercsv_df.reset_index()
+        showercsv_df = showercsv_df.fillna('')
         
         # write the date and weight values to the Sheet and write DataFrame to CSV file
-        dumpfile_showersheet.update([weightcsv_df.columns.values.tolist()] + weightcsv_df.values.tolist())
-        weightcsv_df.to_csv(weight_csv_file_path, index=False)
+        dumpfile_showersheet.update([showercsv_df.columns.values.tolist()] + showercsv_df.values.tolist())
+        showercsv_df.to_csv(shower_csv_file_path, index=False)
         
-        print(f'Updated Weight sheet!\n')
+        print(f'Updated Shower sheet!\n')
 
 class Audio:
     def __init__(self):
