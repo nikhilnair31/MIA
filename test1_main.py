@@ -10,10 +10,12 @@ import boto3
 import openai
 import struct
 import whisper
+import gspread
 import pyaudio
 import pandas as pd
 from dotenv import main
 from datetime import datetime, timedelta
+from google.oauth2.service_account import Credentials
 # endregion
 
 # region Vars
@@ -44,6 +46,83 @@ system_context = "You are MIA, an AI desk robot that makes sarcastic jokes and o
 # endregion
 
 # region Class
+class General:
+    # Define a function to get the current date based on user input
+    def get_date_and_weight(self, text):
+        # Regular expression pattern to match today/tomorrow/yesterday
+        date_pattern = re.compile(r"(today|tomorrow|day after|yesterday|day before)", re.IGNORECASE)
+        # Regular expression pattern to match weight value
+        weight_pattern = re.compile(r"\d+(\.\d+)?")
+
+        # Extract date information
+        date_match = date_pattern.search(text)
+        if date_match:
+            date_text = date_match.group().lower()
+            time_text = self.get_date(date_text)
+            # print("Time:", time_text)
+        else:
+            print("No date found")
+
+        # Extract weight information
+        weight_match = weight_pattern.search(text)
+        if weight_match:
+            weight_text = weight_match.group()
+            # print("Weight:", weight_text)
+        else:
+            print("No weight found")
+
+        return time_text, weight_text
+
+    # Define a function to get the current date based on user input
+    def get_date(self, date_text):
+        today = datetime.today().date()
+        tomorrow = today + timedelta(days=1)
+        dayafter = today + timedelta(days=2)
+        yesterday = today - timedelta(days=1)
+        daybefore = today - timedelta(days=2)
+        date_dict = {
+            'today': today,
+            'tomorrow': tomorrow,
+            'day after': dayafter,
+            'yesterday': yesterday,
+            'day before': daybefore,
+        }
+        # print(f'get_date: {date_dict[date_text.lower()]}\n')
+        return date_dict[date_text.lower()].strftime('%d-%m-%Y')
+
+class Sheets:
+    def __init__(self):
+        gs_credentials = {
+            "type": "service_account",
+            "project_id": "miax-230423",
+
+            "private_key_id": os.environ.get("PRIVATE_KEY_ID"),
+            "private_key": os.environ.get("PRIVATE_KEY").replace(r'\n', '\n'),
+            "client_email": os.environ.get("CLIENT_EMAIL"),
+            "client_id": os.environ.get("CLIENT_ID"),
+
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+
+            "client_x509_cert_url": os.environ.get("AUTH_PROVIDER_X509_CERT_URL")
+        }
+        self.gc = gspread.service_account_from_dict(gs_credentials)
+        self.dumpfile = self.gc.open("Routine 2023 Dump")
+
+    def chatgptcall(self, text, temp=0.7, maxtokens=256):
+        print('Making ChatGPT request..\n')
+
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=text,
+            temperature=temp,
+            max_tokens=maxtokens
+        )
+        response_text = response["choices"][0]["message"]["content"].lower()
+        print(f'Response:\n{response_text}\n')
+        return response_text
+
 class GPT:
     def __init__(self):
         openai.api_key = gpt3_api_key
@@ -137,7 +216,7 @@ class Tasks:
                     You will receive a user's transcribed speech and are to determine which of the following categories it belongs to. Can belong to more than 1 category. If it does then return Y followed by the category itself, else return N. 
                     Categories:
                     1. Weight: Something regarding user's weight
-                    2. Body Measurement: Something regarding user's body measurement
+                    2. Body Measurement: Something regarding user's muscle size measurement
                     3. Shower: Something regarding user's shower or haircare
                     4. WFO: Something regarding user working from office
                     Following is the transcription:'''
@@ -150,6 +229,7 @@ class Tasks:
         if 'y' in requesttype:
             if 'weight' in requesttype:
                 print(f'weight entry: {requesttype}\n')
+                self.weightlog(transcribedtext)
             if 'body measurement' in requesttype:
                 print(f'body measurement entry: {requesttype}\n')
             if 'shower' in requesttype:
@@ -159,50 +239,70 @@ class Tasks:
         else:
             print(f'No request type identified. Please try again.\n')
 
-    # FIXME: Rewrite this
-    def makelogentry(self, transcribedtext):
-        #TODO: Instead of using static conditions just use ChatGPT to confirm wheather the user's command is regarding logging their weight 
-        #TODO: Help model understand difference between today/tomorrow/yesterday and fill date accordingly
-        if 'log' in transcribedtext and 'entry' in transcribedtext:
-            print(f'User asked to make log entry\n')
-            if 'weight' in transcribedtext:
-                self.weightlog(transcribedtext)
-    
-    # FIXME: Rewrite this
     def weightlog(self, transcribedtext):
-        print(f'User asked to make WEIGHT entry\n')
+        print(f'Weight Entry...\n')
 
-        bucket_name = 'nik-bank-data'
-        filename = "weight_log.csv"
-        full_path = os.path.join(tasks_name_directory, filename)
+        dumpfile_weightsheet = sheetObj.dumpfile.worksheet("Weight")
+        # print(f'Current data in dumpfile weight sheet:\n{dumpfile_weightsheet.get_all_values()}\n')
 
-        regex = r'(\d+(?:\.\d+)?)\s*(kg|KG|Kg|kG)?'
-        matches = re.findall(regex, transcribedtext, re.IGNORECASE)
-        if not matches:
-            return None
-        print(f'extract_weight: {matches[0][0]}\n')
+        dateandweight = gptObj.chatgptcall(
+            [{
+                "role": "system", 
+                "content": '''
+                    You will receive a user's transcribed speech and are to determine the date of request and the weight of the user in kg. 
+                    If time of measurement not mentioned assume it was today. Also if weight unit is not mentioned assume it was kg.
+                    Example input: my weight is 75.9 
+                    Example output: today - 75.9 kg. 
+                    Following is the transcription:'''
+                +
+                transcribedtext
+            }],
+            0
+        ).lower()
+        print(f'dateandweight:\n{dateandweight}\n')
 
-        today_date = datetime.now().strftime('%d-%m-%Y')
-        today_weight = float(matches[0][0])
+        date_val, weight_val = genObj.get_date_and_weight(dateandweight)
+        print(f'Date: {date_val} - Weight: {weight_val}\n')
 
-        print(f'Writing date: {today_date} and weight: {today_weight} to CSV..\n')
+        # If error like "No date found" AND "No weight found" then end function here
+        if "no" in [date_val, weight_val]:
+            print(f'Weight sheet not updated.\n')
+            return 
+        
+        # read csv at path and convert to df
+        weight_csv_file_path = os.path.join(tasks_name_directory, "weight_log.csv")
+        weightcsv_df = pd.read_csv(weight_csv_file_path)
+        # weightcsv_df['Date'] = weightcsv_df['Date'].astype(str)
+        # weightcsv_df['Weight  '] = weightcsv_df['Weight  '].astype(str)
+        print(f'Local weight csv:\n{weightcsv_df.columns.tolist()}\n{weightcsv_df.dtypes}\n{weightcsv_df}\n')
 
-        dates_df = pd.read_csv(full_path)
-        dates_df['Date'] = pd.to_datetime(dates_df['Date'], format='%d-%m-%Y', errors='coerce')
+        # Set the index of the dataframe to the 'Date' column
+        weightcsv_df = weightcsv_df.set_index('Date')
+        # Check if the date exists in the index
+        if date_val in weightcsv_df.index:
+            print(f'Date exists in Local weight csv\n')
 
-        todays_weight_df = pd.DataFrame({'Date': [today_date], 'Weight (kg)': [today_weight]})
-        todays_weight_df['Date'] = pd.to_datetime(todays_weight_df['Date'], format='%d-%m-%Y', errors='coerce')
+            # If the date exists, insert the weight value at the corresponding row and 'Weight' column
+            # weightcsv_df.loc[weightcsv_df['Date'] == date_val, 'Weight  '] = weight_val
+            weightcsv_df.loc[date_val, 'Weight  '] = weight_val
+        else:
+            print(f'Date does NOT exist in Local weight csv\n')
 
-        merged_df = pd.merge(dates_df, todays_weight_df, on='Date', how='left')
-        # merged_df.drop('Weight (kg)_x', axis=1, inplace=True)
-        # merged_df.rename(columns={'Weight (kg)_y': 'Weight'}, inplace=True)
-
-        merged_df.to_csv(full_path, index=False)
-        print(f'Wrote date and weight data!\n')
-
-        #FIXME: Setup permissions/IAM roles to write to S3 bucket
-        self.s3_client.upload_file(full_path, bucket_name, filename)
-        print(f'Uploaded to S3!\n')
+            # If the date does not exist, create a new row with the date and weight values
+            new_row = pd.DataFrame({'Weight  ': weight_val}, index=[date_val])
+            weightcsv_df = pd.concat([weightcsv_df, new_row])
+        
+        # Reset the index of the dataframe
+        weightcsv_df = weightcsv_df.reset_index()
+        # Replace NaN values with ''
+        weightcsv_df = weightcsv_df.fillna('')
+        
+        # write the date and weight values to the dumpfil
+        dumpfile_weightsheet.update([weightcsv_df.columns.values.tolist()] + weightcsv_df.values.tolist())
+        # write DataFrame to CSV file
+        weightcsv_df.to_csv(weight_csv_file_path, index=False)
+        
+        print(f'Updated Weight sheet!\n')
 
 class Audio:
     def __init__(self):
@@ -340,8 +440,11 @@ class Conversations:
 # endregion
 
 # region Main
+genObj = General()
+
 gptObj = GPT()
 taskObj = Tasks()
+sheetObj = Sheets()
 convObj = Conversations()
 audioObj = Audio()
 
