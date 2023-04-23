@@ -2,7 +2,7 @@
 
 # MIA - My AI Desk Robot
 - MIA is a smart, AI-powered robot that can help you with your day-to-day tasks. With its powerful computer vision and natural language processing capabilities, MIA can understand your commands and provide you with personalized assistance.
-- Uses OpenAI's Whisper and GPT API to trasnbribe and respond to conversations
+- Uses OpenAI's Whisper and GPT API to transcribe and respond to conversations
 - Uses Google's Sheets API to log data in workbooks
 
 ## Features

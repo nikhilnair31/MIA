@@ -47,23 +47,21 @@ system_context = "You are MIA, an AI desk robot that makes sarcastic jokes and o
 
 # region Class
 class General:
-    # Define a function to get the current date based on user input
-    def get_date_and_weight(self, text):
-        # Regular expression pattern to match today/tomorrow/yesterday
-        date_pattern = re.compile(r"(today|tomorrow|day after|yesterday|day before)", re.IGNORECASE)
-        # Regular expression pattern to match weight value
-        weight_pattern = re.compile(r"\d+(\.\d+)?")
+    def get_timetext(self, text):
+        timetext_pattern = re.compile(r"(today|tomorrow|day after|yesterday|day before)", re.IGNORECASE)
 
-        # Extract date information
-        date_match = date_pattern.search(text)
-        if date_match:
-            date_text = date_match.group().lower()
-            time_text = self.get_date(date_text)
+        timetext_match = timetext_pattern.search(text)
+        if timetext_match:
+            time_text = timetext_match.group().lower()
             # print("Time:", time_text)
         else:
             print("No date found")
 
-        # Extract weight information
+        return time_text
+
+    def get_weight(self, text):
+        weight_pattern = re.compile(r"\d+(\.\d+)?")
+
         weight_match = weight_pattern.search(text)
         if weight_match:
             weight_text = weight_match.group()
@@ -71,10 +69,9 @@ class General:
         else:
             print("No weight found")
 
-        return time_text, weight_text
+        return weight_text
 
-    # Define a function to get the current date based on user input
-    def get_date(self, date_text):
+    def get_date(self, time_text):
         today = datetime.today().date()
         tomorrow = today + timedelta(days=1)
         dayafter = today + timedelta(days=2)
@@ -87,8 +84,8 @@ class General:
             'yesterday': yesterday,
             'day before': daybefore,
         }
-        # print(f'get_date: {date_dict[date_text.lower()]}\n')
-        return date_dict[date_text.lower()].strftime('%d-%m-%Y')
+        # print(f'get_date: {date_dict[time_text.lower()]}\n')
+        return date_dict[time_text.lower()].strftime('%d-%m-%Y')
 
 class Sheets:
     def __init__(self):
@@ -107,27 +104,14 @@ class Sheets:
 
             "client_x509_cert_url": os.environ.get("AUTH_PROVIDER_X509_CERT_URL")
         }
-        self.gc = gspread.service_account_from_dict(gs_credentials)
-        self.dumpfile = self.gc.open("Routine 2023 Dump")
-
-    def chatgptcall(self, text, temp=0.7, maxtokens=256):
-        print('Making ChatGPT request..\n')
-
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=text,
-            temperature=temp,
-            max_tokens=maxtokens
-        )
-        response_text = response["choices"][0]["message"]["content"].lower()
-        print(f'Response:\n{response_text}\n')
-        return response_text
+        client = gspread.service_account_from_dict(gs_credentials)
+        self.dumpfile =client.open("Routine 2023 Dump")
 
 class GPT:
     def __init__(self):
         openai.api_key = gpt3_api_key
     
-    def gpt3call(self, text, temp=0.7, maxtokens=256):
+    def gpt3call(self, text, temp=0.7, maxtokens=256, showLog=True):
         print('Making GPT-3 request..\n')
         
         print(f'GPT-3 Call: {text}\n')
@@ -149,10 +133,13 @@ class GPT:
             max_tokens=maxtokens
         )
         response_text = response["choices"][0].text.lower()
-        print(f'GPT-3 Response:\n{response_text}\n')
+        
+        if showLog:
+            print(f'GPT-3 Response:\n{response_text}\n')
+        
         return response_text
 
-    def chatgptcall(self, text, temp=0.7, maxtokens=256):
+    def chatgptcall(self, text, temp=0.7, maxtokens=256, showLog=True):
         print('Making ChatGPT request..\n')
 
         response = openai.ChatCompletion.create(
@@ -162,10 +149,13 @@ class GPT:
             max_tokens=maxtokens
         )
         response_text = response["choices"][0]["message"]["content"].lower()
-        print(f'Response:\n{response_text}\n')
+        
+        if showLog:
+            print(f'Response:\n{response_text}\n')
+        
         return response_text
 
-    def whispercall(self, filename):
+    def whispercall(self, filename, showLog=True):
         print('Making Whisper request..')
 
         audio_file= open(filename, "rb")
@@ -177,7 +167,10 @@ class GPT:
             # options
         )
         transcript_text = transcript["text"]
-        print(f'Transcript: {transcript_text}\n')
+
+        if showLog:
+            print(f'Transcript: {transcript_text}\n')
+        
         return transcript_text
 
 class Tasks:
@@ -233,7 +226,8 @@ class Tasks:
             if 'body measurement' in requesttype:
                 print(f'body measurement entry: {requesttype}\n')
             if 'shower' in requesttype:
-                print(f'haircare entry: {requesttype}\n')
+                print(f'shower entry: {requesttype}\n')
+                self.showerlog(transcribedtext)
             if 'wfo' in requesttype:
                 print(f'wfo entry: {requesttype}\n')
         else:
@@ -242,10 +236,14 @@ class Tasks:
     def weightlog(self, transcribedtext):
         print(f'Weight Entry...\n')
 
-        dumpfile_weightsheet = sheetObj.dumpfile.worksheet("Weight")
+        datasheet = 'Weight'
+        localdatacsv = 'weight_log.csv'
+        weight_csv_file_path = os.path.join(tasks_name_directory, localdatacsv)
+
+        dumpfile_weightsheet = sheetObj.dumpfile.worksheet(datasheet)
         # print(f'Current data in dumpfile weight sheet:\n{dumpfile_weightsheet.get_all_values()}\n')
 
-        dateandweight = gptObj.chatgptcall(
+        dateandweighttext = gptObj.chatgptcall(
             [{
                 "role": "system", 
                 "content": '''
@@ -257,12 +255,12 @@ class Tasks:
                 +
                 transcribedtext
             }],
-            0
+            0,
+            False
         ).lower()
-        print(f'dateandweight:\n{dateandweight}\n')
-
-        date_val, weight_val = genObj.get_date_and_weight(dateandweight)
-        print(f'Date: {date_val} - Weight: {weight_val}\n')
+        date_val = genObj.get_date(genObj.get_timetext(dateandweighttext))
+        weight_val = genObj.get_weight(dateandweighttext)
+        print(f'dateandweighttext: {dateandweighttext}\n date: {date_val} - weight: {weight_val}\n')
 
         # If error like "No date found" AND "No weight found" then end function here
         if "no" in [date_val, weight_val]:
@@ -270,36 +268,86 @@ class Tasks:
             return 
         
         # read csv at path and convert to df
-        weight_csv_file_path = os.path.join(tasks_name_directory, "weight_log.csv")
         weightcsv_df = pd.read_csv(weight_csv_file_path)
-        # weightcsv_df['Date'] = weightcsv_df['Date'].astype(str)
-        # weightcsv_df['Weight  '] = weightcsv_df['Weight  '].astype(str)
         print(f'Local weight csv:\n{weightcsv_df.columns.tolist()}\n{weightcsv_df.dtypes}\n{weightcsv_df}\n')
 
         # Set the index of the dataframe to the 'Date' column
-        weightcsv_df = weightcsv_df.set_index('Date')
         # Check if the date exists in the index
+        weightcsv_df = weightcsv_df.set_index('Date')
         if date_val in weightcsv_df.index:
             print(f'Date exists in Local weight csv\n')
-
-            # If the date exists, insert the weight value at the corresponding row and 'Weight' column
-            # weightcsv_df.loc[weightcsv_df['Date'] == date_val, 'Weight  '] = weight_val
             weightcsv_df.loc[date_val, 'Weight  '] = weight_val
         else:
             print(f'Date does NOT exist in Local weight csv\n')
-
-            # If the date does not exist, create a new row with the date and weight values
             new_row = pd.DataFrame({'Weight  ': weight_val}, index=[date_val])
             weightcsv_df = pd.concat([weightcsv_df, new_row])
         
-        # Reset the index of the dataframe
+        # Reset the index of the dataframe and replace NaN values with ''
         weightcsv_df = weightcsv_df.reset_index()
-        # Replace NaN values with ''
         weightcsv_df = weightcsv_df.fillna('')
         
-        # write the date and weight values to the dumpfil
+        # write the date and weight values to the Sheet and write DataFrame to CSV file
         dumpfile_weightsheet.update([weightcsv_df.columns.values.tolist()] + weightcsv_df.values.tolist())
-        # write DataFrame to CSV file
+        weightcsv_df.to_csv(weight_csv_file_path, index=False)
+        
+        print(f'Updated Weight sheet!\n')
+    
+    def showerlog(self, transcribedtext):
+        print(f'Shower Entry...\n')
+
+        datasheet = 'Selfcare'
+        localdatacsv = 'selfcare_log.csv'
+        shower_csv_file_path = os.path.join(tasks_name_directory, localdatacsv)
+
+        dumpfile_showersheet = sheetObj.dumpfile.worksheet(datasheet)
+        # print(f'Current data in dumpfile weight sheet:\n{dumpfile_showersheet.get_all_values()}\n')
+
+        datetimeshower = gptObj.chatgptcall(
+            [{
+                "role": "system", 
+                "content": '''
+                    You will receive a user's transcribed speech and are to determine the date of request, the time of shower and the haircare products used. 
+                    If date of shower not mentioned assume it was today. 
+                    If time of shower not mentioned assume it was at 11:00 AM. 
+                    If haircare products not mentioned assume it was Shampoo and Conditioner.
+                    Example input: I just showered and used both shampoo and conditioner 
+                    Example output: today - 11:00 AM - Shampoo and Conditioner. 
+                    Following is the transcription:'''
+                +
+                transcribedtext
+            }],
+            0,
+            False
+        ).lower()
+        date_val, time_val, haircare_val = genObj.get_date_and_weight(datetimeshower)
+        print(f'datetimeshower: {datetimeshower}\n date: {date_val} - time: {time_val} - haircare: {haircare_val}\n')
+
+        # If error like "No date found" AND "No weight found" then end function here
+        if "no" in [date_val, time_val, haircare_val]:
+            print(f'Shower sheet not updated.\n')
+            return 
+        
+        # read csv at path and convert to df
+        weightcsv_df = pd.read_csv(shower_csv_file_path)
+        print(f'Local weight csv:\n{weightcsv_df.columns.tolist()}\n{weightcsv_df.dtypes}\n{weightcsv_df}\n')
+
+        # Set the index of the dataframe to the 'Date' column
+        # Check if the date exists in the index
+        weightcsv_df = weightcsv_df.set_index('Date')
+        if date_val in weightcsv_df.index:
+            print(f'Date exists in Local weight csv\n')
+            weightcsv_df.loc[date_val, 'Weight  '] = weight_val
+        else:
+            print(f'Date does NOT exist in Local weight csv\n')
+            new_row = pd.DataFrame({'Weight  ': weight_val}, index=[date_val])
+            weightcsv_df = pd.concat([weightcsv_df, new_row])
+        
+        # Reset the index of the dataframe and replace NaN values with ''
+        weightcsv_df = weightcsv_df.reset_index()
+        weightcsv_df = weightcsv_df.fillna('')
+        
+        # write the date and weight values to the Sheet and write DataFrame to CSV file
+        dumpfile_showersheet.update([weightcsv_df.columns.values.tolist()] + weightcsv_df.values.tolist())
         weightcsv_df.to_csv(weight_csv_file_path, index=False)
         
         print(f'Updated Weight sheet!\n')
