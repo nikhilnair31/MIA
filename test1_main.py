@@ -47,6 +47,25 @@ system_context = "You are MIA, an AI desk robot that makes sarcastic jokes and o
 
 # region Class
 class General:
+    def create_file_at_path(self, path, filename, headerlist):
+        # Check if tasks folder exists else create it
+        if not os.path.exists(path):
+            os.makedirs(path)
+
+        full_path = os.path.join(path, filename)
+        if os.path.isfile(full_path):
+            print("File already exists!")
+        else:
+            start_date = datetime(datetime.now().year, 1, 1)
+            end_date = start_date + timedelta(days=365*5) - timedelta(days=1)
+            date_list = [start_date + timedelta(days=x) for x in range((end_date-start_date).days + 1)]
+            with open(full_path, mode='w', newline='') as csv_file:
+                writer = csv.writer(csv_file)
+                writer.writerow(headerlist)
+                for date in date_list:
+                    writer.writerow([date.strftime('%d-%m-%Y')])
+            print(f"Created file {full_path}")
+
     def get_weight(self, text):
         weight_pattern = re.compile(r"\d+(\.\d+)?")
 
@@ -54,22 +73,43 @@ class General:
         if weight_match:
             weight_text = weight_match.group()
             # print("Weight:", weight_text)
+            return weight_text
         else:
             print("No weight found")
-
-        return weight_text
+            return ''
 
     def get_shower_product_combo(self, text):
-        haircare_pattern = re.compile(r"(shampoo(\s+and\s+conditioner)?|conditioner)(\s+only)?|no\s+products", re.IGNORECASE)
+        haircare_pattern = re.compile(r"(shampoo(\s+and\s+conditioner)?|conditioner)(\s+only)?|no\s+products|na/", re.IGNORECASE)
 
         haircare_match = haircare_pattern.search(text)
         if haircare_match:
             haircare_text = haircare_match.group().lower()
-            print("Haircare:", haircare_text)
+            # print("Haircare:", haircare_text)
+            return haircare_text
         else:
             print("No haircare products found")
+            return 'na'
 
-        return haircare_text
+    def get_wfo_visit(self, text):
+        if 'wfo' in text:
+            wfovisit_text = '1'
+            # print("WFO Visit:", wfovisit_text)
+            return wfovisit_text
+        else:
+            print("No WO visit found")
+            return ''
+
+    def get_bodypart(self, text):
+        sizes_pattern = re.compile(r"\b(bicep|biceps|arm|arms|waist|hips|thigh|legs|chest)s?\b", re.IGNORECASE)
+
+        sizes_match = sizes_pattern.search(text)
+        if sizes_match:
+            sizes_text = sizes_match.group().lower()
+            print("Body Part Size:", sizes_text)
+            return sizes_text
+        else:
+            print("No date found")
+            return ''
 
     def get_morningevening_etc(self, text):
         timetext_pattern = re.compile(r"(morning|evening)", re.IGNORECASE)
@@ -78,10 +118,10 @@ class General:
         if timetext_match:
             time_text = timetext_match.group().lower()
             print("Time:", time_text)
+            return time_text
         else:
             print("No date found")
-
-        return time_text
+            return 'na'
 
     def get_date(self, text):
         timetext_pattern = re.compile(r"(today|tomorrow|day after|yesterday|day before)", re.IGNORECASE)
@@ -106,10 +146,10 @@ class General:
             time_text = timetext_match.group().lower()
             date_text = date_dict[time_text.lower()].strftime('%d-%m-%Y')
             print(f'Time: {time_text} - Date: {date_text}\n')
+            return date_text
         else:
             print("No date found")
-
-        return date_text
+            return ''
 
 class Sheets:
     def __init__(self):
@@ -200,29 +240,10 @@ class Tasks:
     def __init__(self):
         self.s3_client = boto3.client('s3')
 
-        # Check if tasks folder exists else create it
-        if not os.path.exists(tasks_name_directory):
-            os.makedirs(tasks_name_directory)
-            
-        self.create_file_at_path(tasks_name_directory, "weight_log.csv", ['Date', 'Weight (kg)'])
-        self.create_file_at_path(tasks_name_directory, "sizes_log.csv", ['Date', 'Chest (in)', 'Waist (in)', 'Bicep (in)', 'Thigh (in)'])
-        self.create_file_at_path(tasks_name_directory, "selfcare_log.csv", ['Date', 'ShowerTime', 'Routine'])
-        self.create_file_at_path(tasks_name_directory, "office_visits_log.csv", ['Date', 'Visited?'])
-
-    def create_file_at_path(self, path, filename, headerlist):
-        full_path = os.path.join(path, filename)
-        if os.path.isfile(full_path):
-            print("File already exists!")
-        else:
-            start_date = datetime(datetime.now().year, 1, 1)
-            end_date = start_date + timedelta(days=365*5) - timedelta(days=1)
-            date_list = [start_date + timedelta(days=x) for x in range((end_date-start_date).days + 1)]
-            with open(full_path, mode='w', newline='') as csv_file:
-                writer = csv.writer(csv_file)
-                writer.writerow(headerlist)
-                for date in date_list:
-                    writer.writerow([date.strftime('%d-%m-%Y')])
-            print(f"Created file {full_path}")
+        genObj.create_file_at_path(tasks_name_directory, "weight_log.csv", ['Date', 'Weight (kg)'])
+        genObj.create_file_at_path(tasks_name_directory, "sizes_log.csv", ['Date', 'Chest (in)', 'Waist (in)', 'Bicep (in)', 'Thigh (in)'])
+        genObj.create_file_at_path(tasks_name_directory, "selfcare_log.csv", ['Date', 'ShowerTime', 'Routine'])
+        genObj.create_file_at_path(tasks_name_directory, "office_visits_log.csv", ['Date', 'Visited?'])
 
     def checkifrequesttype(self, transcribedtext):
         requesttype = gptObj.chatgptcall(
@@ -242,46 +263,41 @@ class Tasks:
             0
         )
         
+        # FIXME: Can throw error in case requesttype returns "y weight, n body measurement, n shower, n wfo"
         if 'y' in requesttype:
             if 'weight' in requesttype:
-                print(f'weight entry: {requesttype}\n')
                 self.weightlog(transcribedtext)
             if 'body measurement' in requesttype:
-                print(f'body measurement entry: {requesttype}\n')
+                self.sizemeasurementlog(transcribedtext)
             if 'shower' in requesttype:
-                print(f'shower entry: {requesttype}\n')
                 self.showerlog(transcribedtext)
             if 'wfo' in requesttype:
-                print(f'wfo entry: {requesttype}\n')
+                self.wfolog(transcribedtext)
         else:
             print(f'No request type identified. Please try again.\n')
 
     def weightlog(self, transcribedtext):
         print(f'Weight Entry...\n')
 
-        datasheet = 'Weight'
-        localdatacsv = 'weight_log.csv'
-        weight_csv_file_path = os.path.join(tasks_name_directory, localdatacsv)
+        prompt = [{
+            "role": "system", 
+            "content": '''
+                You will receive a user's transcribed speech and are to determine the date of request and the weight of the user in kg. 
+                If time of measurement not mentioned assume it was today. Also if weight unit is not mentioned assume it was kg.
+                Example input: my weight is 75.9 
+                Example output: today - 75.9 kg. 
+                Following is the transcription:'''
+            +
+            transcribedtext
+        }]
+        temp = 0
+        maxtokens = 256
+        showlog = False
 
-        dumpfile_weightsheet = sheetObj.dumpfile.worksheet(datasheet)
-        # print(f'Current data in dumpfile weight sheet:\n{dumpfile_weightsheet.get_all_values()}\n')
-
-        dateandweighttext = gptObj.chatgptcall(
-            [{
-                "role": "system", 
-                "content": '''
-                    You will receive a user's transcribed speech and are to determine the date of request and the weight of the user in kg. 
-                    If time of measurement not mentioned assume it was today. Also if weight unit is not mentioned assume it was kg.
-                    Example input: my weight is 75.9 
-                    Example output: today - 75.9 kg. 
-                    Following is the transcription:'''
-                +
-                transcribedtext
-            }],
-            0,
-            256,
-            False
-        ).lower()
+        dateandweighttext = gptObj.chatgptcall(prompt, temp, maxtokens, showlog)
+        dateandweighttext = dateandweighttext.lower()
+        
+        # Use helper functions from General class to pull date and weight values
         date_val = genObj.get_date(dateandweighttext)
         weight_val = genObj.get_weight(dateandweighttext)
         print(f'dateandweighttext: {dateandweighttext}\n date: {date_val} - weight: {weight_val}\n')
@@ -290,13 +306,19 @@ class Tasks:
         if "no" in [date_val, weight_val]:
             print(f'Weight sheet not updated.\n')
             return 
-        
+
+        # Open sheet in Sheets file
+        datasheet = 'Weight'
+        dumpfile_weightsheet = sheetObj.dumpfile.worksheet(datasheet)
         # read csv at path and convert to df
+        localdatacsv = 'weight_log.csv'
+        weight_csv_file_path = os.path.join(tasks_name_directory, localdatacsv)
         weightcsv_df = pd.read_csv(weight_csv_file_path)
         print(f'Local weight csv:\n{weightcsv_df.columns.tolist()}\n{weightcsv_df.dtypes}\n{weightcsv_df}\n')
 
         # Set the index of the dataframe to the 'Date' column
         # Check if the date exists in the index
+        # If yes then replace weight value, if not insert the date and weight value
         weightcsv_df = weightcsv_df.set_index('Date')
         if date_val in weightcsv_df.index:
             print(f'Date exists in Local weight csv\n')
@@ -309,43 +331,39 @@ class Tasks:
         # Reset the index of the dataframe and replace NaN values with ''
         weightcsv_df = weightcsv_df.reset_index()
         weightcsv_df = weightcsv_df.fillna('')
-        
-        # write the date and weight values to the Sheet and write DataFrame to CSV file
-        dumpfile_weightsheet.update([weightcsv_df.columns.values.tolist()] + weightcsv_df.values.tolist())
+
+        # write the dataFrame to CSV file
         weightcsv_df.to_csv(weight_csv_file_path, index=False)
+        # write the dataFrame to Sheet file
+        dumpfile_weightsheet.update([weightcsv_df.columns.values.tolist()] + weightcsv_df.values.tolist())
         
         print(f'Updated Weight sheet!\n')
     
     def showerlog(self, transcribedtext):
         print(f'Shower Entry...\n')
 
-        datasheet = 'Selfcare'
-        localdatacsv = 'selfcare_log.csv'
-        shower_csv_file_path = os.path.join(tasks_name_directory, localdatacsv)
+        prompt = [{
+            "role": "system", 
+            "content": '''
+                You will receive a user's transcribed speech and are to determine the date of request, time of shower and haircare products used. 
+                Default date of shower to "today" unless mentioned otherwise.
+                If user has showered, default time of shower to "morning" unless mentioned otherwise and default haircare products used to "Shampoo + Conditioner" unless mentioned otherwise. 
+                If user has not showered, default time of shower to "na" and default haircare products used to "na". 
+                Example input: I just showered and used both shampoo and conditioner 
+                Example output: today - Morning - Shampoo and Conditioner. 
+                Following is the transcription:'''
+            +
+            transcribedtext
+        }]
+        temp = 0
+        maxtokens = 256
+        showlog = False
 
-        dumpfile_showersheet = sheetObj.dumpfile.worksheet(datasheet)
-        # print(f'Current data in dumpfile weight sheet:\n{dumpfile_showersheet.get_all_values()}\n')
+        datetimeshower = gptObj.chatgptcall(prompt, temp, maxtokens, showlog)
+        datetimeshower = datetimeshower.lower()
 
-        datetimeshower = gptObj.chatgptcall(
-            [{
-                "role": "system", 
-                "content": '''
-                    You will receive a user's transcribed speech and are to determine the date of request, time of shower and haircare products used. 
-                    If date of shower not mentioned assume it was today. 
-                    If time of shower not mentioned assume it was morning. 
-                    If haircare products not mentioned assume it was Shampoo + Conditioner.
-                    Example input: I just showered and used both shampoo and conditioner 
-                    Example output: today - Morning - Shampoo and Conditioner. 
-                    Following is the transcription:'''
-                +
-                transcribedtext
-            }],
-            0,
-            256,
-            False
-        ).lower()
-        time_val = genObj.get_morningevening_etc(datetimeshower)
         date_val = genObj.get_date(datetimeshower)
+        time_val = genObj.get_morningevening_etc(datetimeshower)
         haircare_val = genObj.get_shower_product_combo(datetimeshower)
         print(f'datetimeshower: {datetimeshower}\n date: {date_val} - time: {time_val} - haircare: {haircare_val}\n')
 
@@ -354,7 +372,13 @@ class Tasks:
             print(f'Shower sheet not updated.\n')
             return 
         
-        # read csv at path and convert to df
+        # Open sheet in Sheets file
+        datasheet = 'Selfcare'
+        dumpfile_showersheet = sheetObj.dumpfile.worksheet(datasheet)
+        # print(f'Current data in dumpfile weight sheet:\n{dumpfile_showersheet.get_all_values()}\n')
+        # Read csv at path and convert to df
+        localdatacsv = 'selfcare_log.csv'
+        shower_csv_file_path = os.path.join(tasks_name_directory, localdatacsv)
         showercsv_df = pd.read_csv(shower_csv_file_path)
         print(f'Local shower csv:\n{showercsv_df.columns.tolist()}\n{showercsv_df.dtypes}\n{showercsv_df}\n')
 
@@ -373,12 +397,143 @@ class Tasks:
         # Reset the index of the dataframe and replace NaN values with ''
         showercsv_df = showercsv_df.reset_index()
         showercsv_df = showercsv_df.fillna('')
-        
-        # write the date and weight values to the Sheet and write DataFrame to CSV file
-        dumpfile_showersheet.update([showercsv_df.columns.values.tolist()] + showercsv_df.values.tolist())
+
+        # write the dataFrame to CSV file
         showercsv_df.to_csv(shower_csv_file_path, index=False)
+        # write the dataFrame to Sheet file
+        dumpfile_showersheet.update([showercsv_df.columns.values.tolist()] + showercsv_df.values.tolist())
         
         print(f'Updated Shower sheet!\n')
+
+    def wfolog(self, transcribedtext):
+        print(f'WFO Entry...\n')
+
+        prompt = [{
+            "role": "system", 
+            "content": '''
+                You will receive a user's transcribed speech and are to determine the date of request, and whether they visited office on that date or not. 
+                If date not mentioned assume it was today.
+                Example input: I'll be heading to work now
+                Example output: today - WFO
+                Following is the transcription:'''
+            +
+            transcribedtext
+        }]
+        temp = 0
+        maxtokens = 256
+        showlog = False
+
+        dateofficevisit = gptObj.chatgptcall(prompt, temp, maxtokens, showlog)
+        dateofficevisit = dateofficevisit.lower()
+
+        date_val = genObj.get_date(dateofficevisit)
+        visit_val = genObj.get_wfo_visit(dateofficevisit)
+        print(f'dateofficevisit: {dateofficevisit}\n date: {date_val} - visit: {visit_val}\n')
+
+        # If error like "No XYZ found" then end function here
+        if "no" in [date_val, visit_val]:
+            print(f'WFO sheet not updated.\n')
+            return 
+        
+        # Open sheet in Sheets file
+        datasheet = 'Office Visits'
+        dumpfile_wfosheet = sheetObj.dumpfile.worksheet(datasheet)
+        # print(f'Current data in dumpfile weight sheet:\n{dumpfile_wfosheet.get_all_values()}\n')
+        # Read csv at path and convert to df
+        localdatacsv = 'office_visits_log.csv'
+        wfo_csv_file_path = os.path.join(tasks_name_directory, localdatacsv)
+        wfocsv_df = pd.read_csv(wfo_csv_file_path)
+        print(f'Local WFO csv:\n{wfocsv_df.columns.tolist()}\n{wfocsv_df.dtypes}\n{wfocsv_df}\n')
+
+        # Set the index of the dataframe to the 'Date' column
+        # Check if the date exists in the index
+        wfocsv_df = wfocsv_df.set_index('Date')
+        if date_val in wfocsv_df.index:
+            print(f'Date exists in Local WFO csv\n')
+            wfocsv_df.loc[date_val, 'Visit'] = visit_val
+        else:
+            print(f'Date does NOT exist in Local WFO csv\n')
+            new_row = pd.DataFrame({'Visit': visit_val}, index=[date_val])
+            wfocsv_df = pd.concat([wfocsv_df, new_row])
+        
+        # Reset the index of the dataframe and replace NaN values with ''
+        wfocsv_df = wfocsv_df.reset_index()
+        wfocsv_df = wfocsv_df.fillna('')
+
+        # write the dataFrame to CSV file
+        wfocsv_df.to_csv(wfo_csv_file_path, index=False)
+        # write the dataFrame to Sheet file
+        dumpfile_wfosheet.update([wfocsv_df.columns.values.tolist()] + wfocsv_df.values.tolist())
+        
+        print(f'Updated WFO sheet!\n')
+
+    def sizemeasurementlog(self, transcribedtext):
+        print(f'Size Measurement Entry...\n')
+
+        prompt = [{
+            "role": "system", 
+            "content": '''
+                You will receive a user's transcribed speech and are to determine the date of request, the body part being measured and its size. 
+                If date not mentioned assume it was today. If unit not mentioned assume it was inches.
+                Group similar body parts into the following categories:
+                1. Bicep: arm, arms, biceps, bicep 
+                2. Chest: chest
+                3. Waist: belly, hips, waist
+                4. Thigh: leg, legs, thighs, thigh
+                Example input: ok so my biceps are 14.25 inches
+                Example output: today - Bicep - 14.25 in
+                Following is the transcription:'''
+            +
+            transcribedtext
+        }]
+        temp = 0
+        maxtokens = 256
+        showlog = False
+
+        datesize = gptObj.chatgptcall(prompt, temp, maxtokens, showlog)
+        datesize = datesize.lower().title()
+
+        date_val = genObj.get_date(datesize)
+        bodypart_val = genObj.get_bodypart(datesize)
+        size_val = genObj.get_weight(datesize)
+        print(f'datesize: {datesize}\n date: {date_val} - body part: {bodypart_val} - size: {size_val}\n')
+
+        # If error like "No XYZ found" then end function here
+        if "no" in [date_val, bodypart_val, size_val]:
+            print(f'Sizes sheet not updated.\n')
+            return 
+        
+        # Open sheet in Sheets file
+        datasheet = 'Sizes'
+        dumpfile_sizesheet = sheetObj.dumpfile.worksheet(datasheet)
+        # print(f'Current data in dumpfile weight sheet:\n{dumpfile_sizesheet.get_all_values()}\n')
+        # Read csv at path and convert to df
+        localdatacsv = 'sizes_log.csv'
+        sizes_csv_file_path = os.path.join(tasks_name_directory, localdatacsv)
+        sizecsv_df = pd.read_csv(sizes_csv_file_path)
+        print(f'Local Sizes csv:\n{sizecsv_df.columns.tolist()}\n{sizecsv_df.dtypes}\n{sizecsv_df}\n')
+
+        # Set the index of the dataframe to the 'Date' column
+        # Check if the date exists in the index
+        sizecsv_df = sizecsv_df.set_index('Date')
+        if date_val in sizecsv_df.index:
+            print(f'Date exists in Local Sizes csv\n')
+            sizecsv_df.loc[date_val, bodypart_val] = size_val
+        else:
+            print(f'Date does NOT exist in Local Sizes csv\n')
+            new_row = pd.DataFrame({bodypart_val: size_val}, index=[date_val])
+            sizecsv_df = pd.concat([sizecsv_df, new_row])
+        
+        # Reset the index of the dataframe and replace NaN values with ''
+        sizecsv_df = sizecsv_df.reset_index()
+        sizecsv_df = sizecsv_df.fillna('')
+
+        # write the dataFrame to CSV file
+        sizecsv_df.to_csv(sizes_csv_file_path, index=False)
+        # write the dataFrame to Sheet file
+        dumpfile_sizesheet.update([sizecsv_df.columns.values.tolist()] + sizecsv_df.values.tolist())
+
+        print(f'Updated Sizes sheet!\n')
 
 class Audio:
     def __init__(self):
