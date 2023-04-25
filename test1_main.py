@@ -96,7 +96,7 @@ class General:
             return ''
 
     def get_shower_product_combo(self, text):
-        haircare_pattern = re.compile(r"(shampoo(\s+and\s+conditioner)?|conditioner)(\s+only)?|no\s+products|na/", re.IGNORECASE)
+        haircare_pattern = re.compile(r"(none|na|shampoo only|conditioner only|shampoo and conditioner|shampoo \+ conditioner|shampoo|conditioner)", re.IGNORECASE)
 
         haircare_match = haircare_pattern.search(text)
         if haircare_match:
@@ -122,7 +122,7 @@ class General:
         sizes_match = sizes_pattern.search(text)
         if sizes_match:
             sizes_text = sizes_match.group().lower()
-            print("Body Part Size:", sizes_text)
+            # print("Body Part Size:", sizes_text)
             return sizes_text
         else:
             print("No date found")
@@ -134,7 +134,7 @@ class General:
         timetext_match = timetext_pattern.search(text)
         if timetext_match:
             time_text = timetext_match.group().lower()
-            print("Time:", time_text)
+            # print("Time:", time_text)
             return time_text
         else:
             print("No date found")
@@ -162,7 +162,7 @@ class General:
         if timetext_match:
             time_text = timetext_match.group().lower()
             date_text = date_dict[time_text.lower()].strftime('%d-%m-%Y')
-            print(f'Time: {time_text} - Date: {date_text}\n')
+            # print(f'Time: {time_text} - Date: {date_text}\n')
             return date_text
         else:
             print("No date found")
@@ -391,7 +391,7 @@ class Tasks:
         }]
         temp = 0
         maxtokens = 256
-        showlog = False
+        showlog = True
 
         datetimeshower = gptObj.chatgptcall(prompt, temp, maxtokens, showlog)
         datetimeshower = datetimeshower.lower()
@@ -419,6 +419,7 @@ class Tasks:
         # Set the index of the dataframe to the 'Date' column
         # Check if the date exists in the index
         showercsv_df = showercsv_df.set_index('Date')
+        print(f'Local shower csv:\n{showercsv_df.columns.tolist()}\n')
         if date_val in showercsv_df.index:
             print(f'Date exists in Local shower csv\n')
             showercsv_df.loc[date_val, 'Time'] = time_val
@@ -427,10 +428,12 @@ class Tasks:
             print(f'Date does NOT exist in Local shower csv\n')
             new_row = pd.DataFrame({'Time': time_val, 'Haircare': haircare_val}, index=[date_val])
             showercsv_df = pd.concat([showercsv_df, new_row])
+        print(f'Local shower csv:\n{showercsv_df.columns.tolist()}\n')
         
         # Reset the index of the dataframe and replace NaN values with ''
         showercsv_df = showercsv_df.reset_index()
         showercsv_df = showercsv_df.fillna('')
+        print(f'Local shower csv:\n{showercsv_df.columns.tolist()}\n')
 
         # write the dataFrame to CSV file
         showercsv_df.to_csv(shower_csv_file_path, index=False)
