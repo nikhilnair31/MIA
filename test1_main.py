@@ -285,6 +285,8 @@ class Tasks:
                     2. Body Measurement: Something regarding user's muscle size measurement
                     3. Shower: Something regarding user's shower or haircare
                     4. WFO: Something regarding user working from office
+                    Example input: Just note down my weight for today as 73 kg and also I showered in the evening without any soap or conditioner. 
+                    Example output: y - weight, shower.
                     Following is the transcription:'''
                 +
                 transcribedtext
@@ -349,6 +351,7 @@ class Tasks:
         # Check if the date exists in the index
         # If yes then replace weight value, if not insert the date and weight value
         weightcsv_df = weightcsv_df.set_index('Date')
+        # print(f'Local weight csv:\n{weightcsv_df.columns[:5]}\n')
         if date_val in weightcsv_df.index:
             print(f'Date exists in Local weight csv\n')
             weightcsv_df.loc[date_val, 'Weight  '] = weight_val
@@ -356,10 +359,12 @@ class Tasks:
             print(f'Date does NOT exist in Local weight csv\n')
             new_row = pd.DataFrame({'Weight  ': weight_val}, index=[date_val])
             weightcsv_df = pd.concat([weightcsv_df, new_row])
+        # print(f'Local weight csv:\n{weightcsv_df.columns[:5]}\n')
         
         # Reset the index of the dataframe and replace NaN values with ''
         weightcsv_df = weightcsv_df.reset_index()
         weightcsv_df = weightcsv_df.fillna('')
+        # print(f'Local weight csv:\n{weightcsv_df.columns[:5]}\n')
 
         # write the dataFrame to CSV file
         weightcsv_df.to_csv(weight_csv_file_path, index=False)
@@ -375,9 +380,9 @@ class Tasks:
             "role": "system", 
             "content": '''
                 You will receive a user's transcribed speech and are to determine the date of request, time of shower and haircare products used. 
-                Default date of shower to "today" unless mentioned otherwise.
-                If user has showered, default time of shower to "morning" unless mentioned otherwise and default haircare products used to "Shampoo + Conditioner" unless mentioned otherwise. 
                 If user has not showered, default time of shower to "na" and default haircare products used to "na". 
+                If user has showered, default time of shower to "morning" unless mentioned otherwise and default haircare products used to "Shampoo + Conditioner" unless mentioned otherwise. 
+                Default date of shower to "today" unless mentioned otherwise.
                 Example input: I just showered and used both shampoo and conditioner 
                 Example output: today - Morning - Shampoo and Conditioner. 
                 Following is the transcription:'''
@@ -442,8 +447,10 @@ class Tasks:
             "content": '''
                 You will receive a user's transcribed speech and are to determine the date of request, and whether they visited office on that date or not. 
                 If date not mentioned assume it was today.
-                Example input: I'll be heading to work now
-                Example output: today - WFO
+                Example input 1: I'll be heading to work now
+                Example output 1: today - WFO
+                Example input 2: I just had an update, I am not going to office tomorrow.
+                Example output 2: tomorrow - WFH
                 Following is the transcription:'''
             +
             transcribedtext

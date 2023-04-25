@@ -17,6 +17,10 @@ To get started with MIA, follow these steps:
 - Run the `test1_main.py` script
 - Enjoy using MIA!
 
+## To Be Fixed
+- [ ] Sometimes _Date_ column `selfcare_log.csv` gets changed to _index_
+- [ ] _Shower_ task occasionally forgets to default to `today` and uses `na`
+
 ## Contributing
 If you'd like to contribute to MIA, please fork this repository and submit a pull request with your changes. We welcome contributions of all kinds, including bug fixes, new features, and improvements to the documentation.
 
