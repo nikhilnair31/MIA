@@ -12,6 +12,8 @@ import struct
 import whisper
 import gspread
 import pyaudio
+import asyncio
+import aiofiles
 import pandas as pd
 from dotenv import main
 from datetime import datetime, timedelta
@@ -47,24 +49,39 @@ system_context = "You are MIA, an AI desk robot that makes sarcastic jokes and o
 
 # region Class
 class General:
-    def create_file_at_path(self, path, filename, headerlist):
-        # Check if tasks folder exists else create it
-        if not os.path.exists(path):
-            os.makedirs(path)
-
+    async def create_create_file_at_path(self, path, filename, headerlist):
         full_path = os.path.join(path, filename)
         if os.path.isfile(full_path):
-            print("File already exists!")
+            print(f"File {full_path} already exists!")
         else:
             start_date = datetime(datetime.now().year, 1, 1)
             end_date = start_date + timedelta(days=365*5) - timedelta(days=1)
             date_list = [start_date + timedelta(days=x) for x in range((end_date-start_date).days + 1)]
-            with open(full_path, mode='w', newline='') as csv_file:
+            async with aiofiles.open(full_path, mode='w', newline='') as csv_file:
                 writer = csv.writer(csv_file)
                 writer.writerow(headerlist)
                 for date in date_list:
                     writer.writerow([date.strftime('%d-%m-%Y')])
             print(f"Created file {full_path}")
+
+    # def create_file_at_path(self, path, filename, headerlist):
+    #     # Check if tasks folder exists else create it
+    #     if not os.path.exists(path):
+    #         os.makedirs(path)
+
+    #     full_path = os.path.join(path, filename)
+    #     if os.path.isfile(full_path):
+    #         print("File already exists!")
+    #     else:
+    #         start_date = datetime(datetime.now().year, 1, 1)
+    #         end_date = start_date + timedelta(days=365*5) - timedelta(days=1)
+    #         date_list = [start_date + timedelta(days=x) for x in range((end_date-start_date).days + 1)]
+    #         with open(full_path, mode='w', newline='') as csv_file:
+    #             writer = csv.writer(csv_file)
+    #             writer.writerow(headerlist)
+    #             for date in date_list:
+    #                 writer.writerow([date.strftime('%d-%m-%Y')])
+    #         print(f"Created file {full_path}")
 
     def get_weight(self, text):
         weight_pattern = re.compile(r"\d+(\.\d+)?")
@@ -236,14 +253,26 @@ class GPT:
         
         return transcript_text
 
+# FIXME: Add ability to mention specific dates to update
 class Tasks:
     def __init__(self):
         self.s3_client = boto3.client('s3')
 
-        genObj.create_file_at_path(tasks_name_directory, "weight_log.csv", ['Date', 'Weight (kg)'])
-        genObj.create_file_at_path(tasks_name_directory, "sizes_log.csv", ['Date', 'Chest (in)', 'Waist (in)', 'Bicep (in)', 'Thigh (in)'])
-        genObj.create_file_at_path(tasks_name_directory, "selfcare_log.csv", ['Date', 'ShowerTime', 'Routine'])
-        genObj.create_file_at_path(tasks_name_directory, "office_visits_log.csv", ['Date', 'Visited?'])
+        # Check if tasks folder exists else create it
+        if not os.path.exists(tasks_name_directory):
+            os.makedirs(tasks_name_directory)
+
+        # async check for multiple files based on tasks
+        asyncio.run(self.taskfilegen())
+
+    async def taskfilegen(self):
+        await asyncio.gather(
+            genObj.create_create_file_at_path(tasks_name_directory, "weight_log.csv", ['Date', 'Weight (kg)']),
+            genObj.create_create_file_at_path(tasks_name_directory, "sizes_log.csv", ['Date', 'Chest (in)', 'Waist (in)', 'Bicep (in)', 'Thigh (in)']),
+            genObj.create_create_file_at_path(tasks_name_directory, "selfcare_log.csv", ['Date', 'ShowerTime', 'Routine']),
+            genObj.create_create_file_at_path(tasks_name_directory, "office_visits_log.csv", ['Date', 'Visited?']),
+            # genObj.create_create_file_at_path(tasks_name_directory, "test_log.csv", ['Date', 'ABC'])
+        )
 
     def checkifrequesttype(self, transcribedtext):
         requesttype = gptObj.chatgptcall(
@@ -587,7 +616,6 @@ class Audio:
 
     def writeaudiofile(self, recording):
         n_files = len(os.listdir(audio_name_directory))
-
         filename = os.path.join(audio_name_directory, '{}.wav'.format(n_files))
 
         wf = wave.open(filename, 'wb')
@@ -613,7 +641,7 @@ class Audio:
         convObj.conversation_context.append({"role": "user", "content": transcribe_output})
         
         # Save the current conversation
-        convObj.saveconversation()
+        asyncio.run(convObj.saveconversation())
         
         # Respond to user's transcribed speech
         self.response()
@@ -632,7 +660,7 @@ class Audio:
         convObj.conversation_context.append({"role": "assistant", "content": gptresponse})
         
         # Save the current conversation
-        convObj.saveconversation()
+        asyncio.run(convObj.saveconversation())
 
         self.listen()
 
@@ -643,29 +671,40 @@ class Conversations:
         filename = os.path.join(convo_name_directory, 'convo.json')
         print(f'Conversation Filename: {filename}\n')
 
-        past_conversations = json.load(open(filename))
+        try:
+            past_conversations = json.load(open(filename))
 
-        if any('user' in d['role'] for d in past_conversations):
-            print('Loaded past conversations\n')
+            if any('user' in d['role'] for d in past_conversations):
+                print('Loaded past conversations\n')
 
-            summarized_prompt = system_context + summarize_context + str(past_conversations)
-            print(f'Summarized_prompt: {summarized_prompt}\n')
+                summarized_prompt = system_context + summarize_context + str(past_conversations)
+                print(f'Summarized_prompt: {summarized_prompt}\n')
+                
+                past_convo_summary = gptObj.chatgptcall([{"role": "system", "content": summarized_prompt},])
+                self.conversation_context = [{"role": "system", "content": system_context}, {"role": "assistant", "content": past_convo_summary}]
+            elif any('assistant' in d['role'] for d in past_conversations):
+                print('Assistant\'s past response loaded!')
+                self.conversation_context = [{"role": "system", "content": system_context}, {"role": "assistant", "content": past_conversations[1]['content']}]
+            else:
+                print('No past conversations to load from!')
+                
+                greeting = gptObj.chatgptcall([{"role": "system", "content": system_context},])
+                self.conversation_context = [{"role": "system", "content": system_context}, {"role": "assistant", "content": greeting}]
             
-            past_convo_summary = gptObj.chatgptcall([{"role": "system", "content": summarized_prompt},])
-            self.conversation_context = [{"role": "system", "content": system_context}, {"role": "assistant", "content": past_convo_summary}]
-        else:
-            print('No past conversations to load from!')
-            self.conversation_context = [{"role": "system", "content": system_context}]
-        
-        print(f'Conversation_context: {self.conversation_context}\n')
-        self.saveconversation()
+            print(f'Conversation_context: {self.conversation_context}\n')
+            asyncio.run(self.saveconversation())
 
-    def saveconversation(self):
+        except:
+            pass
+
+    async def saveconversation(self):
+        print(f'ASYNC Saveconversation\n')
         filename = os.path.join(convo_name_directory, 'convo.json')
         print(f'Saveconversation Filename: {filename}\n')
 
-        with open(filename, "w") as outfile:
-            json.dump(self.conversation_context, outfile)
+        async with aiofiles.open(filename, "w") as outfile:
+            # json.dump(self.conversation_context, outfile)
+            await outfile.write(json.dumps(self.conversation_context))
         
         print('Saved Conversation!\n')
 # endregion
