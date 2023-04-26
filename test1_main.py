@@ -279,18 +279,20 @@ class Tasks:
         
         # FIXME: Can throw error in case requesttype returns "y weight, n body measurement, n shower, n wfo"
         if 'y' in requesttype:
+            print(f'Request exists.\n')
             if 'weight' in requesttype:
-                self.weightlog(transcribedtext)
+                return self.weightlog(transcribedtext)
             if 'body measurement' in requesttype:
-                self.sizemeasurementlog(transcribedtext)
+                return self.sizemeasurementlog(transcribedtext)
             if 'shower' in requesttype:
-                self.showerlog(transcribedtext)
+                return self.showerlog(transcribedtext)
             if 'wfo' in requesttype:
-                self.wfolog(transcribedtext)
+                return self.wfolog(transcribedtext)
             if 'haircut' in requesttype:
-                self.haircut()
+                return self.haircut()
         else:
             print(f'No request type identified. Please try again.\n')
+            return False
 
     def weightlog(self, transcribedtext):
         print(f'Weight Entry...\n')
@@ -357,6 +359,7 @@ class Tasks:
         dumpfile_weightsheet.update([weightcsv_df.columns.values.tolist()] + weightcsv_df.values.tolist())
         
         print(f'Updated Weight sheet!\n')
+        return False
     
     def showerlog(self, transcribedtext):
         print(f'Shower Entry...\n')
@@ -426,6 +429,7 @@ class Tasks:
         dumpfile_showersheet.update([showercsv_df.columns.values.tolist()] + showercsv_df.values.tolist())
         
         print(f'Updated Shower sheet!\n')
+        return False
 
     def wfolog(self, transcribedtext):
         print(f'WFO Entry...\n')
@@ -490,6 +494,7 @@ class Tasks:
         dumpfile_wfosheet.update([wfocsv_df.columns.values.tolist()] + wfocsv_df.values.tolist())
         
         print(f'Updated WFO sheet!\n')
+        return False
 
     def sizemeasurementlog(self, transcribedtext):
         print(f'Size Measurement Entry...\n')
@@ -558,8 +563,8 @@ class Tasks:
         dumpfile_sizesheet.update([sizecsv_df.columns.values.tolist()] + sizecsv_df.values.tolist())
 
         print(f'Updated Sizes sheet!\n')
+        return False
 
-    # FIXME: Figure out how to not make enquiries a seperate request in the conversation like logging
     def haircut(self):
         print(f'Haircut Enquiry...\n')
         
@@ -593,6 +598,13 @@ class Tasks:
 
         nexthaircut_date = gptObj.chatgptcall(prompt, temp, maxtokens, showlog)
         print(f'{nexthaircut_date}\n')
+
+        # Append GPT's response to the conversation
+        convObj.conversation_context.append({"role": "assistant", "content": nexthaircut_date})
+        # Save the current conversation
+        asyncio.run(convObj.saveconversation())
+
+        return True
 
 class Audio:
     def __init__(self):
@@ -663,18 +675,20 @@ class Audio:
 
         # Transcribe the user's speech
         transcribe_output = gptObj.whispercall(filename)
-        
-        # Use that transcription and check if it contains any task request and if so which?
-        taskObj.checkifrequesttype(transcribe_output)
 
         # Append user's transcribed speech to the conversation
         convObj.conversation_context.append({"role": "user", "content": transcribe_output})
-        
         # Save the current conversation
         asyncio.run(convObj.saveconversation())
         
+        # Use that transcription and check if it contains any task request and if so which?
+        doestaskhaveresponse = taskObj.checkifrequesttype(transcribe_output)
+        
         # Respond to user's transcribed speech
-        self.response()
+        if doestaskhaveresponse is False:
+            self.response()
+        else:
+            self.listen()
 
     def response(self):
         print('Responding..')
@@ -688,7 +702,6 @@ class Audio:
 
         # Append GPT's response to the conversation
         convObj.conversation_context.append({"role": "assistant", "content": gptresponse})
-        
         # Save the current conversation
         asyncio.run(convObj.saveconversation())
 
