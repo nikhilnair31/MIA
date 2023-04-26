@@ -64,25 +64,6 @@ class General:
                     writer.writerow([date.strftime('%d-%m-%Y')])
             print(f"Created file {full_path}")
 
-    # def create_file_at_path(self, path, filename, headerlist):
-    #     # Check if tasks folder exists else create it
-    #     if not os.path.exists(path):
-    #         os.makedirs(path)
-
-    #     full_path = os.path.join(path, filename)
-    #     if os.path.isfile(full_path):
-    #         print("File already exists!")
-    #     else:
-    #         start_date = datetime(datetime.now().year, 1, 1)
-    #         end_date = start_date + timedelta(days=365*5) - timedelta(days=1)
-    #         date_list = [start_date + timedelta(days=x) for x in range((end_date-start_date).days + 1)]
-    #         with open(full_path, mode='w', newline='') as csv_file:
-    #             writer = csv.writer(csv_file)
-    #             writer.writerow(headerlist)
-    #             for date in date_list:
-    #                 writer.writerow([date.strftime('%d-%m-%Y')])
-    #         print(f"Created file {full_path}")
-
     def get_weight(self, text):
         weight_pattern = re.compile(r"\d+(\.\d+)?")
 
@@ -186,7 +167,8 @@ class Sheets:
             "client_x509_cert_url": os.environ.get("AUTH_PROVIDER_X509_CERT_URL")
         }
         client = gspread.service_account_from_dict(gs_credentials)
-        self.dumpfile =client.open("Routine 2023 Dump")
+        self.routineSheetFile = client.open("Routine 2023 Dump")
+        self.bankStatementSheetFile = client.open("Bank 2023 Dump")
 
 class GPT:
     def __init__(self):
@@ -285,6 +267,7 @@ class Tasks:
                     2. Body Measurement: Something regarding user's muscle size measurement
                     3. Shower: Something regarding user's shower or haircare
                     4. WFO: Something regarding user working from office
+                    5. Haircut: Something regarding user getting their hair cut
                     Example input: Just note down my weight for today as 73 kg and also I showered in the evening without any soap or conditioner. 
                     Example output: y - weight, shower.
                     Following is the transcription:'''
@@ -304,6 +287,8 @@ class Tasks:
                 self.showerlog(transcribedtext)
             if 'wfo' in requesttype:
                 self.wfolog(transcribedtext)
+            if 'haircut' in requesttype:
+                self.haircut()
         else:
             print(f'No request type identified. Please try again.\n')
 
@@ -340,7 +325,7 @@ class Tasks:
 
         # Open sheet in Sheets file
         datasheet = 'Weight'
-        dumpfile_weightsheet = sheetObj.dumpfile.worksheet(datasheet)
+        dumpfile_weightsheet = sheetObj.routineSheetFile.worksheet(datasheet)
         # read csv at path and convert to df
         localdatacsv = 'weight_log.csv'
         weight_csv_file_path = os.path.join(tasks_name_directory, localdatacsv)
@@ -408,8 +393,8 @@ class Tasks:
         
         # Open sheet in Sheets file
         datasheet = 'Selfcare'
-        dumpfile_showersheet = sheetObj.dumpfile.worksheet(datasheet)
-        # print(f'Current data in dumpfile weight sheet:\n{dumpfile_showersheet.get_all_values()}\n')
+        dumpfile_showersheet = sheetObj.routineSheetFile.worksheet(datasheet)
+        # print(f'Current data in routineSheetFile weight sheet:\n{dumpfile_showersheet.get_all_values()}\n')
         # Read csv at path and convert to df
         localdatacsv = 'selfcare_log.csv'
         shower_csv_file_path = os.path.join(tasks_name_directory, localdatacsv)
@@ -476,8 +461,8 @@ class Tasks:
         
         # Open sheet in Sheets file
         datasheet = 'Office Visits'
-        dumpfile_wfosheet = sheetObj.dumpfile.worksheet(datasheet)
-        # print(f'Current data in dumpfile weight sheet:\n{dumpfile_wfosheet.get_all_values()}\n')
+        dumpfile_wfosheet = sheetObj.routineSheetFile.worksheet(datasheet)
+        # print(f'Current data in routineSheetFile weight sheet:\n{dumpfile_wfosheet.get_all_values()}\n')
         # Read csv at path and convert to df
         localdatacsv = 'office_visits_log.csv'
         wfo_csv_file_path = os.path.join(tasks_name_directory, localdatacsv)
@@ -544,8 +529,8 @@ class Tasks:
         
         # Open sheet in Sheets file
         datasheet = 'Sizes'
-        dumpfile_sizesheet = sheetObj.dumpfile.worksheet(datasheet)
-        # print(f'Current data in dumpfile weight sheet:\n{dumpfile_sizesheet.get_all_values()}\n')
+        dumpfile_sizesheet = sheetObj.routineSheetFile.worksheet(datasheet)
+        # print(f'Current data in routineSheetFile weight sheet:\n{dumpfile_sizesheet.get_all_values()}\n')
         # Read csv at path and convert to df
         localdatacsv = 'sizes_log.csv'
         sizes_csv_file_path = os.path.join(tasks_name_directory, localdatacsv)
@@ -573,6 +558,38 @@ class Tasks:
         dumpfile_sizesheet.update([sizecsv_df.columns.values.tolist()] + sizecsv_df.values.tolist())
 
         print(f'Updated Sizes sheet!\n')
+
+    def haircut(self):
+        print(f'Haircut Enquiry...\n')
+        
+        # Open bank statement sheet in Sheets file
+        datasheet = 'Data'
+        dumpfile_datasheet = sheetObj.bankStatementSheetFile.worksheet(datasheet)
+        # Convert this Google Sheets file output into a dataframe
+        bankstatement_df = pd.DataFrame(dumpfile_datasheet.get_all_values())
+        # Filter the dataframe based on string
+        haircut_df = bankstatement_df[bankstatement_df['tag'].str.contains('Haircare')]
+        # Show only 3 columns in df
+        haircut_df = haircut_df[['Date']]
+        # convert the 'dates' column to string and join the elements with line break
+        dates_string = '\n'.join(df['Date'].astype(str).tolist())
+
+        prompt = [{
+            "role": "system", 
+            "content": '''
+                You are MIA, an AI desk robot that makes sarcastic jokes and observations. You have the personality of Chandler Bing from Friends and Barney Stinson from HIMYM. 
+                You are to predict the exact date of the user's next haircut. You are provided data of the dates a user's hair was cut and based on the trend you determine the next exact date for their haircut. 
+                If this date happens to be a weekday then pick the nearest weekend date. Provide only the final date with no details on the calculation. If a date cannot be determined reply to the user.
+                The data:'''
+            +
+            dates_string
+        }]
+        temp = 0
+        maxtokens = 24
+        showlog = False
+
+        nexthaircut_date = gptObj.chatgptcall(prompt, temp, maxtokens, showlog)
+        print(f'{nexthaircut_date}\n')
 
 class Audio:
     def __init__(self):
