@@ -168,7 +168,7 @@ class Sheets:
         }
         client = gspread.service_account_from_dict(gs_credentials)
         self.routineSheetFile = client.open("Routine 2023 Dump")
-        self.bankStatementSheetFile = client.open("Bank 2023 Dump")
+        self.bankStatementSheetFile = client.open("Money 2023 Dump")
 
 class GPT:
     def __init__(self):
@@ -559,6 +559,7 @@ class Tasks:
 
         print(f'Updated Sizes sheet!\n')
 
+    # FIXME: Figure out how to not make enquiries a seperate request in the conversation like logging
     def haircut(self):
         print(f'Haircut Enquiry...\n')
         
@@ -566,13 +567,15 @@ class Tasks:
         datasheet = 'Data'
         dumpfile_datasheet = sheetObj.bankStatementSheetFile.worksheet(datasheet)
         # Convert this Google Sheets file output into a dataframe
-        bankstatement_df = pd.DataFrame(dumpfile_datasheet.get_all_values())
+        data = dumpfile_datasheet.get_all_values()
+        # bankstatement_df = pd.DataFrame(data)
+        bankstatement_df = pd.DataFrame(data[1:], columns=data[0])
         # Filter the dataframe based on string
         haircut_df = bankstatement_df[bankstatement_df['tag'].str.contains('Haircare')]
         # Show only 3 columns in df
         haircut_df = haircut_df[['Date']]
         # convert the 'dates' column to string and join the elements with line break
-        dates_string = '\n'.join(df['Date'].astype(str).tolist())
+        dates_string = '\n'.join(haircut_df['Date'].astype(str).tolist())
 
         prompt = [{
             "role": "system", 
@@ -585,7 +588,7 @@ class Tasks:
             dates_string
         }]
         temp = 0
-        maxtokens = 24
+        maxtokens = 256
         showlog = False
 
         nexthaircut_date = gptObj.chatgptcall(prompt, temp, maxtokens, showlog)
