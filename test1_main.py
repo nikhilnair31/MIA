@@ -48,6 +48,27 @@ system_context = "You are MIA, an AI desk robot that makes sarcastic jokes and o
 # endregion
 
 # region Class
+class Sheets:
+    def __init__(self):
+        gs_credentials = {
+            "type": "service_account",
+            "project_id": "miax-230423",
+
+            "private_key_id": os.environ.get("PRIVATE_KEY_ID"),
+            "private_key": os.environ.get("PRIVATE_KEY").replace(r'\n', '\n'),
+            "client_email": os.environ.get("CLIENT_EMAIL"),
+            "client_id": os.environ.get("CLIENT_ID"),
+
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+
+            "client_x509_cert_url": os.environ.get("AUTH_PROVIDER_X509_CERT_URL")
+        }
+        client = gspread.service_account_from_dict(gs_credentials)
+        self.routineSheetFile = client.open("Routine 2023 Dump")
+        self.bankStatementSheetFile = client.open("Money 2023 Dump")
+
 class General:
     async def create_create_file_at_path(self, path, filename, headerlist):
         full_path = os.path.join(path, filename)
@@ -121,6 +142,7 @@ class General:
             print("No date found")
             return 'na'
 
+    # Basic version that uses syntax and regex to pull date
     def get_date(self, text):
         timetext_pattern = re.compile(r"(today|tomorrow|day after|yesterday|day before)", re.IGNORECASE)
         timetext_match = timetext_pattern.search(text)
@@ -149,32 +171,40 @@ class General:
             print("No date found")
             return ''
 
-class Sheets:
-    def __init__(self):
-        gs_credentials = {
-            "type": "service_account",
-            "project_id": "miax-230423",
-
-            "private_key_id": os.environ.get("PRIVATE_KEY_ID"),
-            "private_key": os.environ.get("PRIVATE_KEY").replace(r'\n', '\n'),
-            "client_email": os.environ.get("CLIENT_EMAIL"),
-            "client_id": os.environ.get("CLIENT_ID"),
-
-            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-            "token_uri": "https://oauth2.googleapis.com/token",
-            "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-
-            "client_x509_cert_url": os.environ.get("AUTH_PROVIDER_X509_CERT_URL")
-        }
-        client = gspread.service_account_from_dict(gs_credentials)
-        self.routineSheetFile = client.open("Routine 2023 Dump")
-        self.bankStatementSheetFile = client.open("Money 2023 Dump")
+    # FIXME: Date is usually offet by 1
+    # Uses GPT-4 to pull exact date from text by passing it today's date
+    def get_date_gpt(self, text):
+        today = datetime.today().date()
+        datetext = gptObj.gpt_chat_call(
+            [{
+                "role": "system", 
+                "content": '''
+                    Extract the exact date from a string containing allusions to a date. 
+                    Today's date is '''+today.strftime('%d-%m-%Y')+'''. 
+                    Only give the final output date with no other text. 
+                    Example:
+                    Input: last friday Output: date of the last Friday before today's date. 
+                    Input: 4 days ago Output: date that was 4 days ago from today's date. 
+                    Input: yesterday Output: date that was yesterday's date.
+                '''
+            }], 
+            'gpt-4', 
+            0, 16, False
+        )
+        print(f'datetext: {datetext}\n')
+        pattern = r"\d{2}-\d{2}-\d{4}"
+        match = re.search(pattern, datetext)
+        if match:
+            date_str = match.group()
+            date_obj = datetime.strptime(date_str, '%d-%m-%Y').strftime('%d-%m-%Y')
+            print(f'datetext: {datetext} - match: {match} - date_obj: {date_obj}\n')
+            return date_obj
 
 class GPT:
     def __init__(self):
         openai.api_key = gpt3_api_key
     
-    def gpt3call(self, text, engine="text-davinci-003", temp=0.7, maxtokens=256, showLog=True):
+    def gpt_completion_call(self, text, engine="text-davinci-003", temp=0.7, maxtokens=256, showlog=True):
         print('Making GPT-3 request..\n')
         
         print(f'GPT-3 Call: {text}\n')
@@ -197,12 +227,12 @@ class GPT:
         )
         response_text = response["choices"][0].text.lower()
         
-        if showLog:
+        if showlog:
             print(f'GPT-3 Response:\n{response_text}\n')
         
         return response_text
 
-    def chatgptcall(self, text, model="gpt-3.5-turbo", temp=0.7, maxtokens=256, showLog=True):
+    def gpt_chat_call(self, text, model="gpt-3.5-turbo", temp=0.7, maxtokens=256, showlog=True):
         print('Making ChatGPT request..\n')
 
         response = openai.ChatCompletion.create(
@@ -213,12 +243,12 @@ class GPT:
         )
         response_text = response["choices"][0]["message"]["content"].lower()
         
-        if showLog:
+        if showlog:
             print(f'Response:\n{response_text}\n')
         
         return response_text
 
-    def whispercall(self, filename, showLog=True):
+    def whispercall(self, filename, showlog=True):
         print('Making Whisper request..')
 
         audio_file= open(filename, "rb")
@@ -230,12 +260,11 @@ class GPT:
         )
         transcript_text = transcript["text"]
 
-        if showLog:
+        if showlog:
             print(f'Transcript: {transcript_text}\n')
         
         return transcript_text
 
-# FIXME: Add ability to mention specific dates to update
 class Tasks:
     def __init__(self):
         self.s3_client = boto3.client('s3')
@@ -257,8 +286,8 @@ class Tasks:
         )
 
     def checkifrequesttype(self, transcribedtext):
-        requesttype = gptObj.chatgptcall(
-            [{
+        requesttype = gptObj.gpt_chat_call(
+            text=[{
                 "role": "system", 
                 "content": '''
                     You will receive a user's transcribed speech and are to determine which of the following categories it belongs to. Can belong to more than 1 category. If it does then return Y followed by the category itself, else return N. 
@@ -266,7 +295,7 @@ class Tasks:
                     1. Weight: Something regarding user's weight
                     2. Body Measurement: Something regarding user's muscle size measurement
                     3. Shower: Something regarding user's shower or haircare
-                    4. WFO: Something regarding user working from office
+                    4. WFO: Something regarding user visiting or working from office
                     5. Haircut: Something regarding user getting their hair cut
                     Example input: Just note down my weight for today as 73 kg and also I showered in the evening without any soap or conditioner. 
                     Example output: y - weight, shower.
@@ -274,12 +303,12 @@ class Tasks:
                 +
                 transcribedtext
             }],
-            "gpt-3.5-turbo",
-            0
+            model='gpt-4',
+            temp=0
         )
         
         # FIXME: Can throw error in case requesttype returns "y weight, n body measurement, n shower, n wfo"
-        if 'y' in requesttype:
+        if 'y - ' in requesttype:
             print(f'Request exists.\n')
             if 'weight' in requesttype:
                 return self.weightlog(transcribedtext)
@@ -313,11 +342,11 @@ class Tasks:
         maxtokens = 256
         showlog = False
 
-        dateandweighttext = gptObj.chatgptcall(prompt, "gpt-3.5-turbo", temp, maxtokens, showlog)
+        dateandweighttext = gptObj.gpt_chat_call(text=prompt, temp=temp, maxtokens=maxtokens, showlog=showlog)
         dateandweighttext = dateandweighttext.lower()
         
         # Use helper functions from General class to pull date and weight values
-        date_val = genObj.get_date(dateandweighttext)
+        date_val = genObj.get_date_gpt(dateandweighttext)
         weight_val = genObj.get_weight(dateandweighttext)
         print(f'dateandweighttext: {dateandweighttext}\n date: {date_val} - weight: {weight_val}\n')
 
@@ -382,10 +411,10 @@ class Tasks:
         maxtokens = 256
         showlog = True
 
-        datetimeshower = gptObj.chatgptcall(prompt, "gpt-3.5-turbo", temp, maxtokens, showlog)
+        datetimeshower = gptObj.gpt_chat_call(text=prompt, temp=temp, maxtokens=maxtokens, showlog=showlog)
         datetimeshower = datetimeshower.lower()
 
-        date_val = genObj.get_date(datetimeshower)
+        date_val = genObj.get_date_gpt(datetimeshower)
         time_val = genObj.get_morningevening_etc(datetimeshower)
         haircare_val = genObj.get_shower_product_combo(datetimeshower)
         print(f'datetimeshower: {datetimeshower}\n date: {date_val} - time: {time_val} - haircare: {haircare_val}\n')
@@ -452,10 +481,10 @@ class Tasks:
         maxtokens = 256
         showlog = False
 
-        dateofficevisit = gptObj.chatgptcall(prompt, "gpt-3.5-turbo", temp, maxtokens, showlog)
+        dateofficevisit = gptObj.gpt_chat_call(text=prompt, temp=temp, maxtokens=maxtokens, showlog=showlog)
         dateofficevisit = dateofficevisit.lower()
 
-        date_val = genObj.get_date(dateofficevisit)
+        date_val = genObj.get_date_gpt(dateofficevisit)
         visit_val = genObj.get_wfo_visit(dateofficevisit)
         print(f'dateofficevisit: {dateofficevisit}\n date: {date_val} - visit: {visit_val}\n')
 
@@ -486,7 +515,7 @@ class Tasks:
             wfocsv_df = pd.concat([wfocsv_df, new_row])
         
         # Reset the index of the dataframe and replace NaN values with ''
-        wfocsv_df = wfocsv_df.reset_index()
+        wfocsv_df = wfocsv_df.reset_index(drop=False)
         wfocsv_df = wfocsv_df.fillna('')
 
         # write the dataFrame to CSV file
@@ -520,10 +549,10 @@ class Tasks:
         maxtokens = 256
         showlog = False
 
-        datesize = gptObj.chatgptcall(prompt, "gpt-3.5-turbo", temp, maxtokens, showlog)
+        datesize = gptObj.gpt_chat_call(text=prompt, temp=temp, maxtokens=maxtokens, showlog=showlog)
         datesize = datesize.lower().title()
 
-        date_val = genObj.get_date(datesize)
+        date_val = genObj.get_date_gpt(datesize)
         bodypart_val = genObj.get_bodypart(datesize)
         size_val = genObj.get_weight(datesize)
         print(f'datesize: {datesize}\n date: {date_val} - body part: {bodypart_val} - size: {size_val}\n')
@@ -597,7 +626,7 @@ class Tasks:
         maxtokens = 256
         showlog = False
 
-        nexthaircut_date = gptObj.chatgptcall(prompt, "gpt-3.5-turbo", temp, maxtokens, showlog)
+        nexthaircut_date = gptObj.gpt_chat_call(text=prompt, model='gpt-4', temp=temp, maxtokens=maxtokens, showlog=showlog)
         print(f'{nexthaircut_date}\n')
 
         # Append GPT's response to the conversation
@@ -695,11 +724,11 @@ class Audio:
         print('Responding..')
 
         # Transcribe the user's speech
-        gptresponse = gptObj.chatgptcall(convObj.conversation_context, "gpt-3.5-turbo")
+        gptresponse = gptObj.gpt_chat_call(text = convObj.conversation_context)
         
         # If the phrase 'ai language model' shows up in a response then revert to GPT-3 to get a new response 
         if 'ai language model' in gptresponse.lower():
-            gptresponse = gptObj.gpt3call(convObj.conversation_context, "text-davinci-003")
+            gptresponse = gptObj.gpt_completion_call(text = convObj.conversation_context, engine = "text-davinci-003")
 
         # Append GPT's response to the conversation
         convObj.conversation_context.append({"role": "assistant", "content": gptresponse})
@@ -724,7 +753,7 @@ class Conversations:
                 summarized_prompt = system_context + summarize_context + str(past_conversations)
                 print(f'Summarized_prompt: {summarized_prompt}\n')
                 
-                past_convo_summary = gptObj.chatgptcall([{"role": "system", "content": summarized_prompt},], "gpt-3.5-turbo")
+                past_convo_summary = gptObj.gpt_chat_call(text = [{"role": "system", "content": summarized_prompt},])
                 self.conversation_context = [{"role": "system", "content": system_context}, {"role": "assistant", "content": past_convo_summary}]
             elif any('assistant' in d['role'] for d in past_conversations):
                 print('Assistant\'s past response loaded!')
@@ -732,7 +761,7 @@ class Conversations:
             else:
                 print('No past conversations to load from!')
                 
-                greeting = gptObj.chatgptcall([{"role": "system", "content": system_context},], "gpt-3.5-turbo")
+                greeting = gptObj.gpt_chat_call(text = [{"role": "system", "content": system_context},])
                 self.conversation_context = [{"role": "system", "content": system_context}, {"role": "assistant", "content": greeting}]
             
             print(f'Conversation_context: {self.conversation_context}\n')
