@@ -171,33 +171,42 @@ class General:
             print("No date found")
             return ''
 
-    # FIXME: Date is usually offet by 1
     # Uses GPT-4 to pull exact date from text by passing it today's date
     def get_date_gpt(self, text):
         today = datetime.today().date()
-        datetext = gptObj.gpt_chat_call(
-            [{
+        prompt = [
+            {
                 "role": "system", 
-                "content": '''
-                    Extract the exact date from a string containing allusions to a date. 
-                    Today's date is '''+today.strftime('%d-%m-%Y')+'''. 
-                    Only give the final output date with no other text. 
+                "content": 
+                '''Extract the exact date from a string containing allusions to a date. Today is '''
+                +today.strftime('%A')+
+                ''' '''
+                +today.strftime('%d-%m-%Y')+
+                '''. Only give the final output date with no other text. 
                     Example:
                     Input: last friday Output: date of the last Friday before today's date. 
                     Input: 4 days ago Output: date that was 4 days ago from today's date. 
                     Input: yesterday Output: date that was yesterday's date.
                 '''
-            }], 
-            'gpt-4', 
-            0, 16, False
-        )
-        print(f'datetext: {datetext}\n')
+            },
+            {
+                "role": "user", 
+                "content": text
+            }
+        ]
+        model = 'gpt-4'
+        temp = 0
+        maxtokens = 16
+        showlog = False
         pattern = r"\d{2}-\d{2}-\d{4}"
+
+        datetext = gptObj.gpt_chat_call(text=prompt, model=model, temp=temp, maxtokens=maxtokens, showlog=showlog)
+        
         match = re.search(pattern, datetext)
         if match:
             date_str = match.group()
             date_obj = datetime.strptime(date_str, '%d-%m-%Y').strftime('%d-%m-%Y')
-            print(f'datetext: {datetext} - match: {match} - date_obj: {date_obj}\n')
+            print(f'prompt: {prompt} - datetext: {datetext} - date_obj: {date_obj}\n')
             return date_obj
 
 class GPT:
@@ -348,7 +357,7 @@ class Tasks:
         # Use helper functions from General class to pull date and weight values
         date_val = genObj.get_date_gpt(dateandweighttext)
         weight_val = genObj.get_weight(dateandweighttext)
-        print(f'dateandweighttext: {dateandweighttext}\n date: {date_val} - weight: {weight_val}\n')
+        print(f'date: {date_val} - weight: {weight_val}\n')
 
         # If error like "No date found" AND "No weight found" then end function here
         if "no" in [date_val, weight_val]:
@@ -362,13 +371,11 @@ class Tasks:
         localdatacsv = 'weight_log.csv'
         weight_csv_file_path = os.path.join(tasks_name_directory, localdatacsv)
         weightcsv_df = pd.read_csv(weight_csv_file_path)
-        print(f'Local weight csv:\n{weightcsv_df.columns.tolist()}\n{weightcsv_df.dtypes}\n{weightcsv_df}\n')
 
         # Set the index of the dataframe to the 'Date' column
         # Check if the date exists in the index
         # If yes then replace weight value, if not insert the date and weight value
         weightcsv_df = weightcsv_df.set_index('Date')
-        # print(f'Local weight csv:\n{weightcsv_df.columns[:5]}\n')
         if date_val in weightcsv_df.index:
             print(f'Date exists in Local weight csv\n')
             weightcsv_df.loc[date_val, 'Weight  '] = weight_val
@@ -376,12 +383,10 @@ class Tasks:
             print(f'Date does NOT exist in Local weight csv\n')
             new_row = pd.DataFrame({'Weight  ': weight_val}, index=[date_val])
             weightcsv_df = pd.concat([weightcsv_df, new_row])
-        # print(f'Local weight csv:\n{weightcsv_df.columns[:5]}\n')
         
         # Reset the index of the dataframe and replace NaN values with ''
-        weightcsv_df = weightcsv_df.reset_index()
+        weightcsv_df = weightcsv_df.reset_index(drop=False)
         weightcsv_df = weightcsv_df.fillna('')
-        # print(f'Local weight csv:\n{weightcsv_df.columns[:5]}\n')
 
         # write the dataFrame to CSV file
         weightcsv_df.to_csv(weight_csv_file_path, index=False)
@@ -417,7 +422,7 @@ class Tasks:
         date_val = genObj.get_date_gpt(datetimeshower)
         time_val = genObj.get_morningevening_etc(datetimeshower)
         haircare_val = genObj.get_shower_product_combo(datetimeshower)
-        print(f'datetimeshower: {datetimeshower}\n date: {date_val} - time: {time_val} - haircare: {haircare_val}\n')
+        print(f'date: {date_val} - time: {time_val} - haircare: {haircare_val}\n')
 
         # If error like "No XYZ found" then end function here
         if "no" in [date_val, time_val, haircare_val]:
@@ -432,12 +437,10 @@ class Tasks:
         localdatacsv = 'selfcare_log.csv'
         shower_csv_file_path = os.path.join(tasks_name_directory, localdatacsv)
         showercsv_df = pd.read_csv(shower_csv_file_path)
-        print(f'Local shower csv:\n{showercsv_df.columns.tolist()}\n{showercsv_df.dtypes}\n{showercsv_df}\n')
 
         # Set the index of the dataframe to the 'Date' column
         # Check if the date exists in the index
         showercsv_df = showercsv_df.set_index('Date')
-        print(f'Local shower csv:\n{showercsv_df.columns.tolist()}\n')
         if date_val in showercsv_df.index:
             print(f'Date exists in Local shower csv\n')
             showercsv_df.loc[date_val, 'Time'] = time_val
@@ -446,12 +449,10 @@ class Tasks:
             print(f'Date does NOT exist in Local shower csv\n')
             new_row = pd.DataFrame({'Time': time_val, 'Haircare': haircare_val}, index=[date_val])
             showercsv_df = pd.concat([showercsv_df, new_row])
-        print(f'Local shower csv:\n{showercsv_df.columns.tolist()}\n')
         
         # Reset the index of the dataframe and replace NaN values with ''
-        showercsv_df = showercsv_df.reset_index()
+        showercsv_df = showercsv_df.reset_index(drop=False)
         showercsv_df = showercsv_df.fillna('')
-        print(f'Local shower csv:\n{showercsv_df.columns.tolist()}\n')
 
         # write the dataFrame to CSV file
         showercsv_df.to_csv(shower_csv_file_path, index=False)
@@ -486,7 +487,7 @@ class Tasks:
 
         date_val = genObj.get_date_gpt(dateofficevisit)
         visit_val = genObj.get_wfo_visit(dateofficevisit)
-        print(f'dateofficevisit: {dateofficevisit}\n date: {date_val} - visit: {visit_val}\n')
+        print(f'date: {date_val} - visit: {visit_val}\n')
 
         # If error like "No XYZ found" then end function here
         if "no" in [date_val, visit_val]:
@@ -496,12 +497,10 @@ class Tasks:
         # Open sheet in Sheets file
         datasheet = 'Office Visits'
         dumpfile_wfosheet = sheetObj.routineSheetFile.worksheet(datasheet)
-        # print(f'Current data in routineSheetFile weight sheet:\n{dumpfile_wfosheet.get_all_values()}\n')
         # Read csv at path and convert to df
         localdatacsv = 'office_visits_log.csv'
         wfo_csv_file_path = os.path.join(tasks_name_directory, localdatacsv)
         wfocsv_df = pd.read_csv(wfo_csv_file_path)
-        print(f'Local WFO csv:\n{wfocsv_df.columns.tolist()}\n{wfocsv_df.dtypes}\n{wfocsv_df}\n')
 
         # Set the index of the dataframe to the 'Date' column
         # Check if the date exists in the index
@@ -565,12 +564,10 @@ class Tasks:
         # Open sheet in Sheets file
         datasheet = 'Sizes'
         dumpfile_sizesheet = sheetObj.routineSheetFile.worksheet(datasheet)
-        # print(f'Current data in routineSheetFile weight sheet:\n{dumpfile_sizesheet.get_all_values()}\n')
         # Read csv at path and convert to df
         localdatacsv = 'sizes_log.csv'
         sizes_csv_file_path = os.path.join(tasks_name_directory, localdatacsv)
         sizecsv_df = pd.read_csv(sizes_csv_file_path)
-        print(f'Local Sizes csv:\n{sizecsv_df.columns.tolist()}\n{sizecsv_df.dtypes}\n{sizecsv_df}\n')
 
         # Set the index of the dataframe to the 'Date' column
         # Check if the date exists in the index
@@ -584,7 +581,7 @@ class Tasks:
             sizecsv_df = pd.concat([sizecsv_df, new_row])
         
         # Reset the index of the dataframe and replace NaN values with ''
-        sizecsv_df = sizecsv_df.reset_index()
+        sizecsv_df = sizecsv_df.reset_index(drop=False)
         sizecsv_df = sizecsv_df.fillna('')
 
         # write the dataFrame to CSV file
