@@ -55,7 +55,7 @@ class General:
             print(f"File {full_path} already exists!")
         else:
             start_date = datetime(datetime.now().year, 1, 1)
-            end_date = start_date + timedelta(days=365*5) - timedelta(days=1)
+            end_date = start_date + timedelta(days=365) - timedelta(days=1)
             date_list = [start_date + timedelta(days=x) for x in range((end_date-start_date).days + 1)]
             async with aiofiles.open(full_path, mode='w', newline='') as csv_file:
                 writer = csv.writer(csv_file)
@@ -174,7 +174,7 @@ class GPT:
     def __init__(self):
         openai.api_key = gpt3_api_key
     
-    def gpt3call(self, text, temp=0.7, maxtokens=256, showLog=True):
+    def gpt3call(self, text, engine="text-davinci-003", temp=0.7, maxtokens=256, showLog=True):
         print('Making GPT-3 request..\n')
         
         print(f'GPT-3 Call: {text}\n')
@@ -190,7 +190,7 @@ class GPT:
         print(f'GPT-3 Prompt:\n{plaintext}\n')
 
         response = openai.Completion.create(
-            engine="text-davinci-003",
+            engine=engine,
             prompt=plaintext,
             temperature=temp,
             max_tokens=maxtokens
@@ -202,11 +202,11 @@ class GPT:
         
         return response_text
 
-    def chatgptcall(self, text, temp=0.7, maxtokens=256, showLog=True):
+    def chatgptcall(self, text, model="gpt-3.5-turbo", temp=0.7, maxtokens=256, showLog=True):
         print('Making ChatGPT request..\n')
 
         response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
+            model=model,
             messages=text,
             temperature=temp,
             max_tokens=maxtokens
@@ -274,6 +274,7 @@ class Tasks:
                 +
                 transcribedtext
             }],
+            "gpt-3.5-turbo",
             0
         )
         
@@ -312,7 +313,7 @@ class Tasks:
         maxtokens = 256
         showlog = False
 
-        dateandweighttext = gptObj.chatgptcall(prompt, temp, maxtokens, showlog)
+        dateandweighttext = gptObj.chatgptcall(prompt, "gpt-3.5-turbo", temp, maxtokens, showlog)
         dateandweighttext = dateandweighttext.lower()
         
         # Use helper functions from General class to pull date and weight values
@@ -381,7 +382,7 @@ class Tasks:
         maxtokens = 256
         showlog = True
 
-        datetimeshower = gptObj.chatgptcall(prompt, temp, maxtokens, showlog)
+        datetimeshower = gptObj.chatgptcall(prompt, "gpt-3.5-turbo", temp, maxtokens, showlog)
         datetimeshower = datetimeshower.lower()
 
         date_val = genObj.get_date(datetimeshower)
@@ -451,7 +452,7 @@ class Tasks:
         maxtokens = 256
         showlog = False
 
-        dateofficevisit = gptObj.chatgptcall(prompt, temp, maxtokens, showlog)
+        dateofficevisit = gptObj.chatgptcall(prompt, "gpt-3.5-turbo", temp, maxtokens, showlog)
         dateofficevisit = dateofficevisit.lower()
 
         date_val = genObj.get_date(dateofficevisit)
@@ -519,7 +520,7 @@ class Tasks:
         maxtokens = 256
         showlog = False
 
-        datesize = gptObj.chatgptcall(prompt, temp, maxtokens, showlog)
+        datesize = gptObj.chatgptcall(prompt, "gpt-3.5-turbo", temp, maxtokens, showlog)
         datesize = datesize.lower().title()
 
         date_val = genObj.get_date(datesize)
@@ -596,7 +597,7 @@ class Tasks:
         maxtokens = 256
         showlog = False
 
-        nexthaircut_date = gptObj.chatgptcall(prompt, temp, maxtokens, showlog)
+        nexthaircut_date = gptObj.chatgptcall(prompt, "gpt-3.5-turbo", temp, maxtokens, showlog)
         print(f'{nexthaircut_date}\n')
 
         # Append GPT's response to the conversation
@@ -694,11 +695,11 @@ class Audio:
         print('Responding..')
 
         # Transcribe the user's speech
-        gptresponse = gptObj.chatgptcall(convObj.conversation_context)
+        gptresponse = gptObj.chatgptcall(convObj.conversation_context, "gpt-3.5-turbo")
         
         # If the phrase 'ai language model' shows up in a response then revert to GPT-3 to get a new response 
         if 'ai language model' in gptresponse.lower():
-            gptresponse = gptObj.gpt3call(convObj.conversation_context)
+            gptresponse = gptObj.gpt3call(convObj.conversation_context, "text-davinci-003")
 
         # Append GPT's response to the conversation
         convObj.conversation_context.append({"role": "assistant", "content": gptresponse})
@@ -723,7 +724,7 @@ class Conversations:
                 summarized_prompt = system_context + summarize_context + str(past_conversations)
                 print(f'Summarized_prompt: {summarized_prompt}\n')
                 
-                past_convo_summary = gptObj.chatgptcall([{"role": "system", "content": summarized_prompt},])
+                past_convo_summary = gptObj.chatgptcall([{"role": "system", "content": summarized_prompt},], "gpt-3.5-turbo")
                 self.conversation_context = [{"role": "system", "content": system_context}, {"role": "assistant", "content": past_convo_summary}]
             elif any('assistant' in d['role'] for d in past_conversations):
                 print('Assistant\'s past response loaded!')
@@ -731,7 +732,7 @@ class Conversations:
             else:
                 print('No past conversations to load from!')
                 
-                greeting = gptObj.chatgptcall([{"role": "system", "content": system_context},])
+                greeting = gptObj.chatgptcall([{"role": "system", "content": system_context},], "gpt-3.5-turbo")
                 self.conversation_context = [{"role": "system", "content": system_context}, {"role": "assistant", "content": greeting}]
             
             print(f'Conversation_context: {self.conversation_context}\n')
