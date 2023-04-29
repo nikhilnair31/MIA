@@ -206,7 +206,7 @@ class General:
         if match:
             date_str = match.group()
             date_obj = datetime.strptime(date_str, '%d-%m-%Y').strftime('%d-%m-%Y')
-            print(f'prompt: {prompt} - datetext: {datetext} - date_obj: {date_obj}\n')
+            print(f'prompt: {prompt}\n')
             return date_obj
 
 class GPT:
@@ -316,22 +316,24 @@ class Tasks:
             temp=0
         )
         
-        # FIXME: Can throw error in case requesttype returns "y weight, n body measurement, n shower, n wfo"
+        convContinue = None
         if 'y - ' in requesttype:
             print(f'Request exists.\n')
             if 'weight' in requesttype:
-                return self.weightlog(transcribedtext)
+                convContinue = self.weightlog(transcribedtext)
             if 'body measurement' in requesttype:
-                return self.sizemeasurementlog(transcribedtext)
+                convContinue = self.sizemeasurementlog(transcribedtext)
             if 'shower' in requesttype:
-                return self.showerlog(transcribedtext)
+                convContinue = self.showerlog(transcribedtext)
             if 'wfo' in requesttype:
-                return self.wfolog(transcribedtext)
+                convContinue = self.wfolog(transcribedtext)
             if 'haircut' in requesttype:
-                return self.haircut()
+                convContinue = self.haircut()
         else:
             print(f'No request type identified. Please try again.\n')
-            return False
+            convContinue = False
+        
+        return convContinue
 
     def weightlog(self, transcribedtext):
         print(f'Weight Entry...\n')
