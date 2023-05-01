@@ -85,6 +85,18 @@ class General:
                     writer.writerow([date.strftime('%d-%m-%Y')])
             print(f"Created file {full_path}")
 
+    def conversation_to_text(self, text):
+        plaintext = ''
+        for conv in text:
+            if 'system' in conv['role']:
+                plaintext += conv['content'] + '\n'
+            if 'assistant' in conv['role']:
+                plaintext += 'assistant: ' + conv['content'] + '\n'
+            if 'user' in conv['role']:
+                plaintext += 'user: ' + conv['content'] + '\n'
+        print(f'conversation_to_text:\n{plaintext}\n')
+        return plaintext
+
     def get_weight(self, text):
         weight_pattern = re.compile(r"\d+(\.\d+)?")
 
@@ -215,22 +227,10 @@ class GPT:
     
     def gpt_completion_call(self, text, engine="text-davinci-003", temp=0.7, maxtokens=256, showlog=True):
         print('Making GPT-3 request..\n')
-        
-        print(f'GPT-3 Call: {text}\n')
-
-        plaintext = ''
-        for conv in text:
-            if 'system' in conv['role']:
-                plaintext += conv['content'] + '\n'
-            if 'assistant' in conv['role']:
-                plaintext += 'assistant: ' + conv['content'] + '\n'
-            if 'user' in conv['role']:
-                plaintext += 'user: ' + conv['content'] + '\n'
-        print(f'GPT-3 Prompt:\n{plaintext}\n')
 
         response = openai.Completion.create(
             engine=engine,
-            prompt=plaintext,
+            prompt=text,
             temperature=temp,
             max_tokens=maxtokens
         )
@@ -727,7 +727,8 @@ class Audio:
         
         # If the phrase 'ai language model' shows up in a response then revert to GPT-3 to get a new response 
         if 'ai language model' in gptresponse.lower():
-            gptresponse = gptObj.gpt_completion_call(text = convObj.conversation_context, engine = "text-davinci-003")
+            plaintext = genObj.conversation_to_text(text = convObj.conversation_context)
+            gptresponse = gptObj.gpt_completion_call(text = plaintext, engine = "text-davinci-003")
 
         # Append GPT's response to the conversation
         convObj.conversation_context.append({"role": "assistant", "content": gptresponse})
