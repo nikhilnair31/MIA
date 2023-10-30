@@ -48,7 +48,11 @@ prompt = "MIA Food log entry. Rice 200 grams. End."
 
 # Conversations
 summarize_context = "The following is your context of the previous conversation with the user: "
-system_context = "You are MIA, an AI desk robot that makes sarcastic jokes and observations. You have the personality of Chandler Bing from Friends and Barney Stinson from HIMYM. Initiate with a greeting."
+system_context = """
+You are MIA, an AI desk robot that makes sarcastic jokes and observations. 
+You have the personality of JARVIS, Chandler Bing and Barney Stinson combined. 
+Keep responses short. Initiate with a greeting.
+"""
 # endregion
 
 # region Class
@@ -238,7 +242,6 @@ class GPT:
             max_tokens=maxtokens
         )
         response_text = response["choices"][0].text.lower()
-        
         if showlog:
             print(f'GPT-3 Response:\n{response_text}\n')
         
@@ -255,7 +258,6 @@ class GPT:
             max_tokens=maxtokens
         )
         response_text = response["choices"][0]["message"]["content"].lower()
-        
         if showlog:
             print(f'{"-"*50}\nResponse:\n{response_text}\n{"-"*50}\n')
         
@@ -639,6 +641,10 @@ class Tasks:
 
 class Audio:
     def __init__(self):
+        self.require_hotword = False
+        self.elapsed_time = 0
+        self.last_audio_time = time.time()
+
         set_api_key(elevenlabs_key)
 
         self.porcupine = pvporcupine.create(
@@ -672,16 +678,34 @@ class Audio:
         return rms * 1000
 
     def listen(self):
-        print(f'Listening beginning...\n')
+        print(f'Listening beginning...\n{self.require_hotword} - {self.last_audio_time} - {self.elapsed_time}')
+
+        self.last_audio_time = time.time()
+        self.elapsed_time = 0
         while True:
             pcm = self.stream.read(self.porcupine.frame_length)
-            pcm = struct.unpack_from("h" * self.porcupine.frame_length, pcm)
 
-            keyword_index = self.porcupine.process(pcm)
+            if self.require_hotword:
+                pcm = struct.unpack_from("h" * self.porcupine.frame_length, pcm)
+                keyword_index = self.porcupine.process(pcm)
 
-            if keyword_index >= 0:
-                print("Hotword Detected")
-                self.record()
+                if keyword_index >= 0:
+                    print("Hotword Detected")
+                    self.require_hotword = False
+                    self.record()
+                else:
+                    self.elapsed_time = time.time() - self.last_audio_time
+
+            else:
+                rms_val = self.rms(pcm)
+                if rms_val > Threshold:
+                    self.record()
+                else:
+                    self.elapsed_time = time.time() - self.last_audio_time
+
+                    if self.elapsed_time >= TIMEOUT_LENGTH:
+                        print("Timed out!")
+                        self.require_hotword = True
 
     def record(self):
         print(f'Noise detected, recording beginning!\n')
@@ -725,13 +749,13 @@ class Audio:
         asyncio.run(convObj.saveconversation())
         
         # Use that transcription and check if it contains any task request and if so which?
-        doestaskhaveresponse = taskObj.checkifrequesttype(transcribe_output)
+        # doestaskhaveresponse = taskObj.checkifrequesttype(transcribe_output)
         
         # Respond to user's transcribed speech
-        if doestaskhaveresponse is False:
-            self.response()
-        else:
-            self.listen()
+        # if doestaskhaveresponse is False:
+        self.response()
+        # else:
+            # self.listen()
 
     def response(self):
         print('Responding..')
@@ -743,10 +767,10 @@ class Audio:
         if 'ai language model' in gptresponse.lower():
             plaintext = genObj.conversation_to_text(text = convObj.conversation_context)
             gptresponse = gptObj.gpt_completion_call(text = plaintext, engine = "text-davinci-003")
-
+        
         audio = generate(
             text=gptresponse,
-            voice="Nicole",
+            voice="Bella",
             model="eleven_monolingual_v1",
             stream=True
         )
@@ -806,10 +830,9 @@ class Conversations:
 
 # region Main
 genObj = General()
-
 gptObj = GPT()
-taskObj = Tasks()
-sheetObj = Sheets()
+# taskObj = Tasks()
+# sheetObj = Sheets()
 convObj = Conversations()
 audioObj = Audio()
 
