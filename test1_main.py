@@ -25,26 +25,22 @@ from google.oauth2.service_account import Credentials
 # region Vars
 # Loaded Env Vars
 main.load_dotenv()
-Threshold = float(os.getenv("THRESHOLD"))
+THRESHOLD = float(os.getenv("THRESHOLD"))
 TIMEOUT_LENGTH = float(os.getenv("TIMEOUT_LENGTH"))
-chunk = int(os.getenv("CHUNK"))
 CHANNELS = int(os.getenv("CHANNELS"))
-RATE = int(os.getenv("RATE"))
-swidth = int(os.getenv("SWIDTH"))
-gpt3_api_key = str(os.getenv("OPENAI_API_KEY"))
-pico_key = os.getenv("PICO_ACCESS_KEY")
-elevenlabs_key = os.getenv("ELEVENLABS_API_KEY")
+SWIDTH = int(os.getenv("SWIDTH"))
+OPENAI_API_KEY = str(os.getenv("OPENAI_API_KEY"))
+PORCUPINE_API_KEY = os.getenv("PORCUPINE_API_KEY")
+ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
 
-SHORT_NORMALIZE = (1.0/32768.0)
-FORMAT = pyaudio.paInt16
+# Som extra vars
+short_normalize = (1.0/32768.0)
+audio_format = pyaudio.paInt16
 
 # Path for audio and conversations
 audio_name_directory = r'.\audio'
 convo_name_directory = r'.\conversations'
 tasks_name_directory = r'.\tasks'
-
-# Prompt for transcribing
-prompt = "MIA Food log entry. Rice 200 grams. End."
 
 # Conversations
 summarize_context = "The following is your context of the previous conversation with the user: "
@@ -230,7 +226,7 @@ class General:
 
 class GPT:
     def __init__(self):
-        openai.api_key = gpt3_api_key
+        openai.api_key = OPENAI_API_KEY
     
     def gpt_completion_call(self, text, engine="text-davinci-003", temp=0.7, maxtokens=256, showlog=True):
         print('Making GPT-3 request..\n')
@@ -247,7 +243,6 @@ class GPT:
         
         return response_text
 
-    # FIXME: See how to handle rate limit or API issues
     def gpt_chat_call(self, text, model="gpt-3.5-turbo", temp=0.7, maxtokens=256, showlog=True):
         print('Making ChatGPT request..\n')
 
@@ -645,33 +640,31 @@ class Audio:
         self.elapsed_time = 0
         self.last_audio_time = time.time()
 
-        set_api_key(elevenlabs_key)
+        set_api_key(ELEVENLABS_API_KEY)
 
         self.porcupine = pvporcupine.create(
-            access_key=pico_key,
-            # keywords=['picovoice', 'bumblebee']
+            access_key=PORCUPINE_API_KEY,
             keyword_paths=[r'models\hey-mia_en_windows_v3_0_0.ppn']
         )
 
         self.p = pyaudio.PyAudio()
         self.stream = self.p.open(
-            format=FORMAT,
+            format=audio_format,
             channels=CHANNELS,
             rate=self.porcupine.sample_rate,
             input=True,
-            # output=True,
             frames_per_buffer=self.porcupine.frame_length
         )
     
     @staticmethod
     def rms(frame):
-        count = len(frame) / swidth
+        count = len(frame) / SWIDTH
         format = "%dh" % (count)
         shorts = struct.unpack(format, frame)
 
         sum_squares = 0.0
         for sample in shorts:
-            n = sample * SHORT_NORMALIZE
+            n = sample * short_normalize
             sum_squares += n * n
         rms = math.pow(sum_squares / count, 0.5)
 
@@ -698,7 +691,7 @@ class Audio:
 
             else:
                 rms_val = self.rms(pcm)
-                if rms_val > Threshold:
+                if rms_val > THRESHOLD:
                     self.record()
                 else:
                     self.elapsed_time = time.time() - self.last_audio_time
@@ -715,8 +708,8 @@ class Audio:
 
         while current <= end:
 
-            data = self.stream.read(chunk)
-            if self.rms(data) >= Threshold: end = time.time() + TIMEOUT_LENGTH
+            data = self.stream.read(self.porcupine.frame_length)
+            if self.rms(data) >= THRESHOLD: end = time.time() + TIMEOUT_LENGTH
 
             current = time.time()
             rec.append(data)
@@ -729,8 +722,8 @@ class Audio:
 
         wf = wave.open(filename, 'wb')
         wf.setnchannels(CHANNELS)
-        wf.setsampwidth(self.p.get_sample_size(FORMAT))
-        wf.setframerate(RATE)
+        wf.setsampwidth(self.p.get_sample_size(audio_format))
+        wf.setframerate(self.porcupine.sample_rate)
         wf.writeframes(recording)
         wf.close()
         print(f'Written to file: {filename}\n')
