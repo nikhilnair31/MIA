@@ -14,9 +14,11 @@ import gspread
 import pyaudio
 import asyncio
 import aiofiles
+import pvporcupine
 import pandas as pd
 from dotenv import main
 from datetime import datetime, timedelta
+from elevenlabs import set_api_key, generate, play, stream
 from google.oauth2.service_account import Credentials
 # endregion
 
@@ -25,11 +27,13 @@ from google.oauth2.service_account import Credentials
 main.load_dotenv()
 Threshold = float(os.getenv("THRESHOLD"))
 TIMEOUT_LENGTH = float(os.getenv("TIMEOUT_LENGTH"))
-gpt3_api_key = str(os.getenv("OPENAI_API_KEY"))
 chunk = int(os.getenv("CHUNK"))
 CHANNELS = int(os.getenv("CHANNELS"))
 RATE = int(os.getenv("RATE"))
 swidth = int(os.getenv("SWIDTH"))
+gpt3_api_key = str(os.getenv("OPENAI_API_KEY"))
+pico_key = os.getenv("PICO_ACCESS_KEY")
+elevenlabs_key = os.getenv("ELEVENLABS_API_KEY")
 
 SHORT_NORMALIZE = (1.0/32768.0)
 FORMAT = pyaudio.paInt16
@@ -67,7 +71,6 @@ class Sheets:
         }
         client = gspread.service_account_from_dict(gs_credentials)
         self.routineSheetFile = client.open("Routine 2023 Dump")
-        self.bankStatementSheetFile = client.open("Money 2023 Dump")
 
 class General:
     async def create_create_file_at_path(self, path, filename, headerlist):
@@ -241,6 +244,7 @@ class GPT:
         
         return response_text
 
+    # FIXME: See how to handle rate limit or API issues
     def gpt_chat_call(self, text, model="gpt-3.5-turbo", temp=0.7, maxtokens=256, showlog=True):
         print('Making ChatGPT request..\n')
 
@@ -253,12 +257,12 @@ class GPT:
         response_text = response["choices"][0]["message"]["content"].lower()
         
         if showlog:
-            print(f'Response:\n{response_text}\n')
+            print(f'{"-"*50}\nResponse:\n{response_text}\n{"-"*50}\n')
         
         return response_text
 
     def whispercall(self, filename, showlog=True):
-        print('Making Whisper request..')
+        print('Making Whisper request..\n')
 
         audio_file= open(filename, "rb")
         transcript = openai.Audio.transcribe(
@@ -270,7 +274,7 @@ class GPT:
         transcript_text = transcript["text"]
 
         if showlog:
-            print(f'Transcript: {transcript_text}\n')
+            print(f'{"-"*50}\nTranscript: {transcript_text}\n{"-"*50}\n')
         
         return transcript_text
 
@@ -598,14 +602,12 @@ class Tasks:
         print(f'Haircut Enquiry...\n')
         
         # Open bank statement sheet in Sheets file
-        datasheet = 'Data'
-        dumpfile_datasheet = sheetObj.bankStatementSheetFile.worksheet(datasheet)
+        dumpfile_datasheet = sheetObj.routineSheetFile.worksheet('Full Dump')
         # Convert this Google Sheets file output into a dataframe
         data = dumpfile_datasheet.get_all_values()
-        # bankstatement_df = pd.DataFrame(data)
         bankstatement_df = pd.DataFrame(data[1:], columns=data[0])
         # Filter the dataframe based on string
-        haircut_df = bankstatement_df[bankstatement_df['tag'].str.contains('Haircare')]
+        haircut_df = bankstatement_df[bankstatement_df['tag'].str.contains('haircare')]
         # Show only 3 columns in df
         haircut_df = haircut_df[['Date']]
         # convert the 'dates' column to string and join the elements with line break
@@ -637,14 +639,22 @@ class Tasks:
 
 class Audio:
     def __init__(self):
+        set_api_key(elevenlabs_key)
+
+        self.porcupine = pvporcupine.create(
+            access_key=pico_key,
+            # keywords=['picovoice', 'bumblebee']
+            keyword_paths=[r'models\hey-mia_en_windows_v3_0_0.ppn']
+        )
+
         self.p = pyaudio.PyAudio()
         self.stream = self.p.open(
             format=FORMAT,
             channels=CHANNELS,
-            rate=RATE,
+            rate=self.porcupine.sample_rate,
             input=True,
-            output=True,
-            frames_per_buffer=chunk
+            # output=True,
+            frames_per_buffer=self.porcupine.frame_length
         )
     
     @staticmethod
@@ -664,9 +674,13 @@ class Audio:
     def listen(self):
         print(f'Listening beginning...\n')
         while True:
-            input = self.stream.read(chunk)
-            rms_val = self.rms(input)
-            if rms_val > Threshold:
+            pcm = self.stream.read(self.porcupine.frame_length)
+            pcm = struct.unpack_from("h" * self.porcupine.frame_length, pcm)
+
+            keyword_index = self.porcupine.process(pcm)
+
+            if keyword_index >= 0:
+                print("Hotword Detected")
                 self.record()
 
     def record(self):
@@ -729,6 +743,14 @@ class Audio:
         if 'ai language model' in gptresponse.lower():
             plaintext = genObj.conversation_to_text(text = convObj.conversation_context)
             gptresponse = gptObj.gpt_completion_call(text = plaintext, engine = "text-davinci-003")
+
+        audio = generate(
+            text=gptresponse,
+            voice="Nicole",
+            model="eleven_monolingual_v1",
+            stream=True
+        )
+        stream(audio)
 
         # Append GPT's response to the conversation
         convObj.conversation_context.append({"role": "assistant", "content": gptresponse})
