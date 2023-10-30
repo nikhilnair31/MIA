@@ -17,6 +17,12 @@ To get started with MIA, follow these steps:
 - Run the `test1_main.py` script
 - Enjoy using MIA!
 
+## To-Do
+[ ] Save previous conversations in a vector database to serve as memory
+[ ] Add ability to access the internet
+[x] Add voice using 11Labs API
+[x] Add instant listening on first play then delay till hotword detection
+
 ## Contributing
 If you'd like to contribute to MIA, please fork this repository and submit a pull request with your changes. We welcome contributions of all kinds, including bug fixes, new features, and improvements to the documentation.
 
