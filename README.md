@@ -20,6 +20,7 @@ To get started with MIA, follow these steps:
 ## To-Do
 [ ] Save previous conversations in a vector database to serve as memory
 [ ] Add ability to access the internet
+[ ] Batch export Google Recorder transcripts into the vector database
 [x] Add voice using 11Labs API
 [x] Add instant listening on first play then delay till hotword detection
 
