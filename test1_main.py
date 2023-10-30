@@ -239,7 +239,14 @@ class GPT:
         )
         response_text = response["choices"][0].text.lower()
         if showlog:
-            print(f'GPT-3 Response:\n{response_text}\n')
+            print(f'{"-"*50}\nGPT-3 Response:\n{response_text}\n{"-"*50}\n')
+        
+        audio = generate(
+            text=response_text,
+            voice="Bella", model="eleven_monolingual_v1",
+            stream=True
+        )
+        stream(audio)
         
         return response_text
 
@@ -254,7 +261,14 @@ class GPT:
         )
         response_text = response["choices"][0]["message"]["content"].lower()
         if showlog:
-            print(f'{"-"*50}\nResponse:\n{response_text}\n{"-"*50}\n')
+            print(f'{"-"*50}\nChatGPT Response:\n{response_text}\n{"-"*50}\n')
+
+        audio = generate(
+            text=response_text,
+            voice="Bella", model="eleven_monolingual_v1",
+            stream=True
+        )
+        stream(audio)
         
         return response_text
 
@@ -671,7 +685,7 @@ class Audio:
         return rms * 1000
 
     def listen(self):
-        print(f'Listening beginning...\n{self.require_hotword} - {self.last_audio_time} - {self.elapsed_time}')
+        print(f'Listening beginning...\n')
 
         self.last_audio_time = time.time()
         self.elapsed_time = 0
@@ -683,7 +697,7 @@ class Audio:
                 keyword_index = self.porcupine.process(pcm)
 
                 if keyword_index >= 0:
-                    print("Hotword Detected")
+                    print("\nHotword Detected!\n")
                     self.require_hotword = False
                     self.record()
                 else:
@@ -697,7 +711,7 @@ class Audio:
                     self.elapsed_time = time.time() - self.last_audio_time
 
                     if self.elapsed_time >= TIMEOUT_LENGTH:
-                        print("Timed out!")
+                        print("\nTimed out!\n")
                         self.require_hotword = True
 
     def record(self):
@@ -760,14 +774,6 @@ class Audio:
         if 'ai language model' in gptresponse.lower():
             plaintext = genObj.conversation_to_text(text = convObj.conversation_context)
             gptresponse = gptObj.gpt_completion_call(text = plaintext, engine = "text-davinci-003")
-        
-        audio = generate(
-            text=gptresponse,
-            voice="Bella",
-            model="eleven_monolingual_v1",
-            stream=True
-        )
-        stream(audio)
 
         # Append GPT's response to the conversation
         convObj.conversation_context.append({"role": "assistant", "content": gptresponse})
