@@ -1,44 +1,45 @@
 # region Packages 
-import re
 import os
-import io
-import csv
 import wave
 import time
-import json
 import math
-import boto3
 import openai
 import struct
-import whisper
-import gspread
 import pyaudio
 import asyncio
-import aiofiles
 import threading
 import pvporcupine
 import pandas as pd
 from dotenv import main
-from datetime import datetime, timedelta
-from elevenlabs import set_api_key, generate, play, stream
-from google.oauth2.service_account import Credentials
+
+import pinecone
+from tqdm.autonotebook import tqdm
+
+from langchain.vectorstores import Pinecone
+from langchain.document_loaders import TextLoader
+from langchain.embeddings.openai import OpenAIEmbeddings
+from langchain.text_splitter import CharacterTextSplitter, RecursiveCharacterTextSplitter 
 # endregion
 
 # region Vars
 main.load_dotenv()
+
 THRESHOLD = float(os.getenv("THRESHOLD"))
 TIMEOUT_LENGTH = float(os.getenv("TIMEOUT_LENGTH"))
 CHANNELS = int(os.getenv("CHANNELS"))
 SWIDTH = int(os.getenv("SWIDTH"))
 CHUNK = int(os.getenv("CHUNK"))
 RATE = int(os.getenv("RATE"))
+
 OPENAI_API_KEY = str(os.getenv("OPENAI_API_KEY"))
+PINECONE_API_KEY = str(os.getenv("PINECONE_API_KEY"))
+PINECONE_ENV = str(os.getenv("PINECONE_ENV_KEY"))
 
 short_normalize = (1.0/32768.0)
 audio_format = pyaudio.paInt16
 
 audio_name_directory = r'.\audio'
-transcript_name_directory = r'.\transcripts'
+docs_name_directory = r'.\docs'
 # endregion
 
 # region Class
@@ -52,11 +53,39 @@ class General:
                 os.remove(file_path)
 
         # Delete all transcripts
-        files = os.listdir(transcript_name_directory)
+        files = os.listdir(docs_name_directory)
         for file in files:
-            file_path = os.path.join(transcript_name_directory, file)
+            file_path = os.path.join(docs_name_directory, file)
             if os.path.isfile(file_path):
                 os.remove(file_path)
+
+class Vector:
+    def __init__(self):
+        self.chunk_size = 1000
+        self.chunk_overlap = 0
+
+        self.embeddings = OpenAIEmbeddings()
+        pinecone.init(
+            api_key=PINECONE_API_KEY,  # find at app.pinecone.io
+            environment=PINECONE_ENV  # next to api key in console
+        )
+        self.index = pinecone.Index("mia")
+
+    def load_text(self, text_filename):
+        loader = TextLoader(text_filename)
+        documents = loader.load()
+        print (f'You have {len(documents)} document(s) in your data')
+
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size = self.chunk_size, 
+            chunk_overlap = self.chunk_overlap
+        )
+        documents = text_splitter.split_documents(documents)
+        print(f'Doc Length: {len(documents)}')
+
+        Pinecone.from_documents(documents, self.embeddings, index_name="mia")
+        print(f'Upserted doc!\n')
+
     
 class GPT:
     def __init__(self):
@@ -79,8 +108,9 @@ class GPT:
         return transcript_text
 
 class Audio:
-    # Set up recorder
     def __init__(self):
+        self.max_record_time = 11 * 60
+
         self.p = pyaudio.PyAudio()
         self.stream = self.p.open(
             format=audio_format,
@@ -118,6 +148,8 @@ class Audio:
     async def record(self):
         print(f'Recording!\n')
         rec = []
+        elapsed_time = 0
+        start_time = time.time()
         current = time.time()
         end = time.time() + TIMEOUT_LENGTH
 
@@ -128,6 +160,12 @@ class Audio:
 
             current = time.time()
             rec.append(data)
+
+            # Check if 10 minutes have elapsed
+            elapsed_time = current - start_time
+            if elapsed_time >= self.max_record_time:
+                start_time = current
+                break
         
         recording = b''.join(rec)
         timestamp = time.strftime('%Y%m%d%H%M%S')
@@ -144,8 +182,8 @@ class Audio:
         wf.setframerate(RATE)
         wf.writeframes(recording)
         wf.close()
-
         print(f'Saved Recording! : {filename}\n')
+
         self.transcribe(timestamp, filename)
         
     def transcribe(self, timestamp, filename):
@@ -154,15 +192,16 @@ class Audio:
         transcribe_output = gptObj.whispercall(filename)
         
         filename = os.path.join(docs_name_directory, f'{timestamp}.txt')
-
         with open(filename, "w") as outfile:
-            outfile.write(content)
-        
+            outfile.write(transcribe_output)
         print(f'Saved Transcript! : {filename}\n')
+
+        vecObj.load_text(filename)
 # endregion
 
 # region Main
 genObj = General()
+vecObj = Vector()
 gptObj = GPT()
 audioObj = Audio()
 
