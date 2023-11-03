@@ -18,10 +18,12 @@ To get started with MIA, follow these steps:
 - Enjoy using MIA!
 
 ## To-Do
+[ ] Add `summarize` function that takes in full conversation with window size for actual conversations 
 [ ] Save previous conversations in a vector database to serve as memory
 [ ] Add ability to access the internet
 [ ] Batch export Google Recorder transcripts into the vector database
 [ ] Find out how to send recorded audio directly to Whisper without saving
+[ ] Add code to split recorded audio such that no file size is >25 MB
 [x] Add voice using 11Labs API
 [x] Add instant listening on first play then delay till hotword detection
 

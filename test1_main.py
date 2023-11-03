@@ -14,10 +14,14 @@ import gspread
 import pyaudio
 import asyncio
 import aiofiles
+import pinecone
 import pvporcupine
 import pandas as pd
 from dotenv import main
+from tqdm.autonotebook import tqdm
 from datetime import datetime, timedelta
+from langchain.vectorstores import Pinecone
+from langchain.embeddings.openai import OpenAIEmbeddings
 from elevenlabs import set_api_key, generate, play, stream
 from google.oauth2.service_account import Credentials
 # endregion
@@ -32,10 +36,15 @@ SWIDTH = int(os.getenv("SWIDTH"))
 OPENAI_API_KEY = str(os.getenv("OPENAI_API_KEY"))
 PORCUPINE_API_KEY = os.getenv("PORCUPINE_API_KEY")
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
+PINECONE_API_KEY = str(os.getenv("PINECONE_API_KEY"))
+PINECONE_ENV = str(os.getenv("PINECONE_ENV_KEY"))
 
 # Som extra vars
 short_normalize = (1.0/32768.0)
 audio_format = pyaudio.paInt16
+
+# MIA Vars
+SPEAK_FLAG = False
 
 # Path for audio and conversations
 audio_name_directory = r'.\audio'
@@ -47,6 +56,7 @@ summarize_context = "The following is your context of the previous conversation 
 system_context = """
 You are MIA, an AI desk robot that makes sarcastic jokes and observations. 
 You have the personality of JARVIS, Chandler Bing and Barney Stinson combined. 
+Do not patronize and just treat like you would a friend.
 Keep responses short. Initiate with a greeting.
 """
 # endregion
@@ -228,27 +238,22 @@ class GPT:
     def __init__(self):
         openai.api_key = OPENAI_API_KEY
     
-    def gpt_completion_call(self, text, engine="text-davinci-003", temp=0.7, maxtokens=256, showlog=True):
-        print('Making GPT-3 request..\n')
+    # def gpt_completion_call(self, text, engine="text-davinci-003", temp=0.7, maxtokens=256, showlog=True):
+    #     print('Making GPT-3 request..\n')
 
-        response = openai.Completion.create(
-            engine=engine,
-            prompt=text,
-            temperature=temp,
-            max_tokens=maxtokens
-        )
-        response_text = response["choices"][0].text.lower()
-        if showlog:
-            print(f'{"-"*50}\nGPT-3 Response:\n{response_text}\n{"-"*50}\n')
+    #     response = openai.Completion.create(
+    #         engine=engine,
+    #         prompt=text,
+    #         temperature=temp,
+    #         max_tokens=maxtokens
+    #     )
+    #     response_text = response["choices"][0].text.lower()
+    #     if showlog:
+    #         print(f'{"-"*50}\nGPT-3 Response:\n{response_text}\n{"-"*50}\n')
         
-        audio = generate(
-            text=response_text,
-            voice="Bella", model="eleven_monolingual_v1",
-            stream=True
-        )
-        stream(audio)
+    #     audioObj.speak(response_text)
         
-        return response_text
+    #     return response_text
 
     def gpt_chat_call(self, text, model="gpt-3.5-turbo", temp=0.7, maxtokens=256, showlog=True):
         print('Making ChatGPT request..\n')
@@ -263,12 +268,7 @@ class GPT:
         if showlog:
             print(f'{"-"*50}\nChatGPT Response:\n{response_text}\n{"-"*50}\n')
 
-        audio = generate(
-            text=response_text,
-            voice="Bella", model="eleven_monolingual_v1",
-            stream=True
-        )
-        stream(audio)
+        audioObj.speak(response_text)
         
         return response_text
 
@@ -285,20 +285,17 @@ class GPT:
         transcript_text = transcript["text"]
 
         if showlog:
-            print(f'{"-"*50}\nTranscript: {transcript_text}\n{"-"*50}\n')
+            print(f'{"="*50}\nTranscript: {transcript_text}\n{"="*50}\n')
         
         return transcript_text
 
 class Tasks:
     def __init__(self):
-        self.s3_client = boto3.client('s3')
+        self.embeddings = OpenAIEmbeddings()
 
-        # Check if tasks folder exists else create it
-        if not os.path.exists(tasks_name_directory):
-            os.makedirs(tasks_name_directory)
-
-        # async check for multiple files based on tasks
-        asyncio.run(self.taskfilegen())
+        pinecone.init(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
+        self.index = pinecone.Index("mia")
+        self.vectorstore = Pinecone(self.index, self.embeddings, "text")
 
     async def taskfilegen(self):
         await asyncio.gather(
@@ -314,15 +311,7 @@ class Tasks:
             text=[{
                 "role": "system", 
                 "content": '''
-                    You will receive a user's transcribed speech and are to determine which of the following categories it belongs to. Can belong to more than 1 category. If it does then return Y followed by the category itself, else return N. 
-                    Categories:
-                    1. Weight: Something regarding user's weight
-                    2. Body Measurement: Something regarding user's muscle size measurement
-                    3. Shower: Something regarding user's shower or haircare
-                    4. WFO: Something regarding user visiting or working from office
-                    5. Haircut: Something regarding user getting their hair cut
-                    Example input: Just note down my weight for today as 73 kg and also I showered in the evening without any soap or conditioner. 
-                    Example output: y - weight, shower.
+                    You will receive a user's transcribed speech and are to determine if the user is requesting for some information or the completion of a task. If he is then return Y, else return N. 
                     Following is the transcription:'''
                 +
                 transcribedtext
@@ -332,18 +321,66 @@ class Tasks:
         )
         
         convContinue = None
-        if 'y - ' in requesttype:
+        if 'y' in requesttype:
             print(f'Request exists.\n')
-            if 'weight' in requesttype:
-                convContinue = self.weightlog(transcribedtext)
-            if 'body measurement' in requesttype:
-                convContinue = self.sizemeasurementlog(transcribedtext)
-            if 'shower' in requesttype:
-                convContinue = self.showerlog(transcribedtext)
-            if 'wfo' in requesttype:
-                convContinue = self.wfolog(transcribedtext)
-            if 'haircut' in requesttype:
-                convContinue = self.haircut()
+
+            query = gptObj.gpt_chat_call(
+                text=[{
+                    "role": "system", 
+                    "content": '''
+                        You will receive a user's transcribed speech and are to reword it to extract the topic discussed to feed into another system as a prompt. 
+                        Example: 
+                        Transcript: Nice MIA but just tell me about the energy drink I'd heard about yesterday
+                        Response: energy drink
+                        Following is the transcription:'''
+                    +
+                    transcribedtext
+                }],
+                model='gpt-4',
+                temp=0
+            )
+            print(f'query: {query}\n')
+            request = gptObj.gpt_chat_call(
+                text=[{
+                    "role": "system", 
+                    "content": '''
+                        You will receive a user's transcribed speech and are to reword it to extract the task requested. 
+                        Example:
+                        Transcript: i heard something about gravity and quantum physics so could you just summarize that for me?
+                        Response: summarize the transcript above
+                        Following is the transcription:'''
+                    +
+                    transcribedtext
+                }],
+                model='gpt-4',
+                temp=0
+            )
+            print(f'request: {request}\n')
+
+            docs = self.vectorstore.similarity_search(query, k=1)
+            print(f'docs: {docs}\n')
+            reply = gptObj.gpt_chat_call(
+                text=[{
+                    "role": "system", 
+                    "content": '''
+                        You will receive a transcription of information and are to answer the user's request. If the answer isn't available then say that you don't know it. 
+                        Transcription:'''
+                    +
+                    docs[0].page_content
+                    +
+                    '''Request:'''
+                    +
+                    request
+                }],
+                model='gpt-3.5-turbo',
+                temp=0.5
+            )
+            print(f'reply: {reply}\n')
+
+            convObj.conversation_context.append({"role": "assistant", "content": reply})
+            asyncio.run(convObj.saveconversation())
+            
+            convContinue = True
         else:
             print(f'No request type identified. Please try again.\n')
             convContinue = False
@@ -650,17 +687,19 @@ class Tasks:
 
 class Audio:
     def __init__(self):
-        self.require_hotword = False
+        set_api_key(ELEVENLABS_API_KEY)
+        
         self.elapsed_time = 0
         self.last_audio_time = time.time()
+        self.require_hotword = False
 
-        set_api_key(ELEVENLABS_API_KEY)
-
+        # Set up hotword detector
         self.porcupine = pvporcupine.create(
             access_key=PORCUPINE_API_KEY,
             keyword_paths=[r'models\hey-mia_en_windows_v3_0_0.ppn']
         )
 
+        # Set up recorder
         self.p = pyaudio.PyAudio()
         self.stream = self.p.open(
             format=audio_format,
@@ -669,6 +708,13 @@ class Audio:
             input=True,
             frames_per_buffer=self.porcupine.frame_length
         )
+
+        # Delete all recordings
+        files = os.listdir(audio_name_directory)
+        for file in files:
+            file_path = os.path.join(audio_name_directory, file)
+            if os.path.isfile(file_path):
+                os.remove(file_path)
     
     @staticmethod
     def rms(frame):
@@ -685,10 +731,10 @@ class Audio:
         return rms * 1000
 
     def listen(self):
-        print(f'Listening beginning...\n')
+        print(f'Listening...\n')
 
-        self.last_audio_time = time.time()
         self.elapsed_time = 0
+        self.last_audio_time = time.time()
         while True:
             pcm = self.stream.read(self.porcupine.frame_length)
 
@@ -697,7 +743,7 @@ class Audio:
                 keyword_index = self.porcupine.process(pcm)
 
                 if keyword_index >= 0:
-                    print("\nHotword Detected!\n")
+                    print("Hotword Detected!\n")
                     self.require_hotword = False
                     self.record()
                 else:
@@ -711,11 +757,11 @@ class Audio:
                     self.elapsed_time = time.time() - self.last_audio_time
 
                     if self.elapsed_time >= TIMEOUT_LENGTH:
-                        print("\nTimed out!\n")
+                        print("Timed out!\n")
                         self.require_hotword = True
 
     def record(self):
-        print(f'Noise detected, recording beginning!\n')
+        print(f'Recording!\n')
         rec = []
         current = time.time()
         end = time.time() + TIMEOUT_LENGTH
@@ -723,16 +769,18 @@ class Audio:
         while current <= end:
 
             data = self.stream.read(self.porcupine.frame_length)
-            if self.rms(data) >= THRESHOLD: end = time.time() + TIMEOUT_LENGTH
+            if self.rms(data) >= THRESHOLD: 
+                end = time.time() + TIMEOUT_LENGTH
 
             current = time.time()
             rec.append(data)
         
-        self.writeaudiofile(b''.join(rec))
+        recording = b''.join(rec)
+        timestamp = time.strftime('%Y%m%d%H%M%S')
+        self.writeaudiofile(timestamp, recording)
 
-    def writeaudiofile(self, recording):
-        n_files = len(os.listdir(audio_name_directory))
-        filename = os.path.join(audio_name_directory, '{}.wav'.format(n_files))
+    def writeaudiofile(self, timestamp, recording):
+        filename = os.path.join(audio_name_directory, '{}.wav'.format(timestamp))
 
         wf = wave.open(filename, 'wb')
         wf.setnchannels(CHANNELS)
@@ -745,42 +793,45 @@ class Audio:
         self.transcribe(filename)
 
     def transcribe(self, filename):
-        print('Transcribing...')
+        print('Transcribing...\n')
 
-        # Transcribe the user's speech
         transcribe_output = gptObj.whispercall(filename)
 
-        # Append user's transcribed speech to the conversation
         convObj.conversation_context.append({"role": "user", "content": transcribe_output})
-        # Save the current conversation
         asyncio.run(convObj.saveconversation())
         
-        # Use that transcription and check if it contains any task request and if so which?
-        # doestaskhaveresponse = taskObj.checkifrequesttype(transcribe_output)
+        doestaskhaveresponse = taskObj.checkifrequesttype(transcribe_output)
         
-        # Respond to user's transcribed speech
-        # if doestaskhaveresponse is False:
-        self.response()
-        # else:
-            # self.listen()
+        if doestaskhaveresponse is False:
+            self.response()
+        else:
+            self.listen()
 
     def response(self):
-        print('Responding..')
+        print('Responding..\n')
 
-        # Transcribe the user's speech
         gptresponse = gptObj.gpt_chat_call(text = convObj.conversation_context)
         
         # If the phrase 'ai language model' shows up in a response then revert to GPT-3 to get a new response 
-        if 'ai language model' in gptresponse.lower():
-            plaintext = genObj.conversation_to_text(text = convObj.conversation_context)
-            gptresponse = gptObj.gpt_completion_call(text = plaintext, engine = "text-davinci-003")
+        # if 'ai language model' in gptresponse.lower():
+        #     plaintext = genObj.conversation_to_text(text = convObj.conversation_context)
+        #     gptresponse = gptObj.gpt_completion_call(text = plaintext, engine = "text-davinci-003")
 
-        # Append GPT's response to the conversation
         convObj.conversation_context.append({"role": "assistant", "content": gptresponse})
-        # Save the current conversation
         asyncio.run(convObj.saveconversation())
 
         self.listen()
+
+    def speak(self, text):
+        if SPEAK_FLAG:
+            audio = generate(
+                text=response_text,
+                voice="Bella", model="eleven_monolingual_v1",
+                stream=True
+            )
+            stream(audio)
+        else:
+            pass
 
 class Conversations:
     def __init__(self):
@@ -830,7 +881,7 @@ class Conversations:
 # region Main
 genObj = General()
 gptObj = GPT()
-# taskObj = Tasks()
+taskObj = Tasks()
 # sheetObj = Sheets()
 convObj = Conversations()
 audioObj = Audio()
