@@ -9,6 +9,7 @@ import pyaudio
 import asyncio
 import threading
 import pvporcupine
+import numpy as np
 import pandas as pd
 from dotenv import main
 
@@ -86,24 +87,36 @@ class Vector:
         Pinecone.from_documents(documents, self.embeddings, index_name="mia")
         print(f'Upserted doc!\n')
 
-    
 class GPT:
     def __init__(self):
         openai.api_key = OPENAI_API_KEY
     
-    def whispercall(self, filename, showlog=True):
+    def gpt_chat_call(self, text, model="gpt-3.5-turbo", temp=0.7, maxtokens=512):
+        print('Making ChatGPT request..\n')
+
+        response = openai.ChatCompletion.create(
+            model=model,
+            messages=text,
+            temperature=temp,
+            max_tokens=maxtokens
+        )
+        response_text = response["choices"][0]["message"]["content"].lower()
+        print(f'{"-"*50}\nChatGPT Response:\n{response_text}\n{"-"*50}\n')
+        
+        return response_text
+
+    def whispercall(self, filename):
         print('Making Whisper request..\n')
 
         audio_file= open(filename, "rb")
         transcript = openai.Audio.transcribe(
             "whisper-1", 
             audio_file, 
-            language="en"
+            language="en",
+            prompt="don't make up words to fill in the rest of the sentence. if background noise return ."
         )
         transcript_text = transcript["text"]
-
-        if showlog:
-            print(f'{"="*50}\nTranscript: {transcript_text}\n{"="*50}\n')
+        print(f'{"="*50}\nTranscript: {transcript_text}\n{"="*50}\n')
         
         return transcript_text
 
@@ -176,24 +189,46 @@ class Audio:
     def writeaudiofile(self, timestamp, recording):
         filename = os.path.join(audio_name_directory, '{}.wav'.format(timestamp))
 
+        # FIXME: Doesn't really work
+        rms_values = [self.rms(frame) for frame in [recording[i:i+CHUNK] for i in range(0, len(recording), CHUNK)]]
+        silent_frames = [i for i, rms in enumerate(rms_values) if rms < THRESHOLD]
+        if silent_frames:
+            first_silent_frame = silent_frames[0]
+            timeout_frames = int(TIMEOUT_LENGTH / (1.0/RATE))
+            trim_end_frame = min(first_silent_frame + timeout_frames, len(rms_values))
+            trimmed_audio = recording[: trim_end_frame * CHUNK]
+        else:
+            trimmed_audio = recording
+
         wf = wave.open(filename, 'wb')
         wf.setnchannels(CHANNELS)
         wf.setsampwidth(self.p.get_sample_size(audio_format))
         wf.setframerate(RATE)
-        wf.writeframes(recording)
+        wf.writeframes(trimmed_audio)
         wf.close()
         print(f'Saved Recording! : {filename}\n')
 
         self.transcribe(timestamp, filename)
-        
+
     def transcribe(self, timestamp, filename):
         print('Transcribing...\n')
 
         transcribe_output = gptObj.whispercall(filename)
+        clean_transcript = gptObj.gpt_chat_call(
+            text=[{
+                "role": "system", 
+                "content": f"""
+                    You will receive a user's transcribed speech and are to clean it up. 
+                    If it's empty leave it as is and DO NOT MAKE any text up.
+                    Transcription: {transcribe_output}"""
+            }],
+            model='gpt-3.5-turbo',
+            temp=0
+        )
         
         filename = os.path.join(docs_name_directory, f'{timestamp}.txt')
         with open(filename, "w") as outfile:
-            outfile.write(transcribe_output)
+            outfile.write(clean_transcript)
         print(f'Saved Transcript! : {filename}\n')
 
         vecObj.load_text(filename)
