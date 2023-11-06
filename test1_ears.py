@@ -25,6 +25,11 @@ from langchain.text_splitter import CharacterTextSplitter, RecursiveCharacterTex
 # region Vars
 main.load_dotenv()
 
+INDEX_NAME = os.getenv("INDEX_NAME")
+CHUNK_SIZE = int(os.getenv("CHUNK_SIZE"))
+CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP"))
+MAX_REC_TIME = int(os.getenv("MAX_REC_TIME"))
+
 THRESHOLD = float(os.getenv("THRESHOLD"))
 TIMEOUT_LENGTH = float(os.getenv("TIMEOUT_LENGTH"))
 CHANNELS = int(os.getenv("CHANNELS"))
@@ -62,29 +67,20 @@ class General:
 
 class Vector:
     def __init__(self):
-        self.chunk_size = 1000
-        self.chunk_overlap = 0
-
         self.embeddings = OpenAIEmbeddings()
-        pinecone.init(
-            api_key=PINECONE_API_KEY,  # find at app.pinecone.io
-            environment=PINECONE_ENV  # next to api key in console
-        )
-        self.index = pinecone.Index("mia")
+
+        pinecone.init(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
+        self.index = pinecone.Index(INDEX_NAME)
 
     def load_text(self, text_filename):
-        loader = TextLoader(text_filename)
-        documents = loader.load()
+        documents = TextLoader(text_filename).load()
         print (f'You have {len(documents)} document(s) in your data')
 
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size = self.chunk_size, 
-            chunk_overlap = self.chunk_overlap
-        )
+        text_splitter = RecursiveCharacterTextSplitter(chunk_size = CHUNK_SIZE, chunk_overlap = CHUNK_OVERLAP)
         documents = text_splitter.split_documents(documents)
         print(f'Doc Length: {len(documents)}')
 
-        Pinecone.from_documents(documents, self.embeddings, index_name="mia")
+        Pinecone.from_documents(documents, self.embeddings, index_name=INDEX_NAME)
         print(f'Upserted doc!\n')
 
 class GPT:
@@ -122,7 +118,7 @@ class GPT:
 
 class Audio:
     def __init__(self):
-        self.max_record_time = 11 * 60
+        self.max_record_time = MAX_REC_TIME * 60
 
         self.p = pyaudio.PyAudio()
         self.stream = self.p.open(

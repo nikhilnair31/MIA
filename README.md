@@ -18,7 +18,7 @@ To get started with MIA, follow these steps:
 
 - Clone this repository to your local machine.
 - Install the required dependencies using `pip install -r requirements.txt`.
-- Run the `test1_main.py` script
+- Run the `test1_mIA.py` and `test1_ears.py` script
 - Enjoy using MIA!
 
 ## To-Do
@@ -38,16 +38,17 @@ To get started with MIA, follow these steps:
 
 ### EARS
 
-- [ ] Combine multiple small transcript txts into single large then upsert
-    - If length of current transcript txt < N characters block upsert
-    - If sum of lengths of previous N transcript txts > N characters then allow upsert
-- [ ] Treat single word transcriptions as errors and stop saving
-  - Check if transcript length = 1 then break
 - [ ] Create knowledge graph from upserted data?
   - Needs further research
 - [ ] Find out how to send recorded audio directly to Whisper without saving
   - Needs further research
 - [ ] Figure out how to crop out silent portions during TIMEOUT_LENGTH
+- [x] Combine multiple small transcript txts into single large then upsert
+    - If length of current transcript txt < N characters block upsert and if sum of lengths of previous N transcript txts > N characters then allow upsert
+    - Had to change this to time between trasncriptions instead of length
+- [x] Treat single word transcriptions as errors and stop saving
+  - Problem is if you just said "hi"
+    - Allowing single word since time gap shouldn't merge related transcripts together
 - [x] Add Whisper prompt to not fill silence with hallucinations
 - [x] Split recorded audio such that no file size is >25 MB
 - [x] Continuous listening/recording with separate thread for transcribing, file saving and upserting
