@@ -25,13 +25,12 @@ To get started with MIA, follow these steps:
 
 ### MIA
 
-- [ ] Restructure MIA'S BRAIN
-    - [ ] Split into 1. User Facing 2. Internal Thoughts 3. Knowledge Base
-    - [ ] 
-- [ ] Add ability to put MIA to sleep when not needed
-- [ ] Add `summarize` function that takes in full conversation with window size for actual conversations
-- [ ] Save previous conversations in a vector database to serve as memory
+- [ ] Add logic to upsert relevant data from user 
+- [ ] Update logic for past conversation summary
 - [ ] Add ability to access the internet
+- [x] Add ability to put MIA to sleep when not needed
+- [x] Save previous conversations in a vector database to serve as memory
+    - No a normal conversation will remain in the JSON. Only factual information about user is to be upserted to PineCone.
 - [x] Add voice using 11Labs API
 - [x] Add instant listening on first play
 - [x] Hotword detection
@@ -40,9 +39,16 @@ To get started with MIA, follow these steps:
 
 - [ ] Create knowledge graph from upserted data?
   - Needs further research
-- [ ] Find out how to send recorded audio directly to Whisper without saving
+- [ ] Check for error of audio file < 0.1 s
+- [ ] Improve the fact retrieval logic from transcripts
+- [x] Figure out how to crop out silent portions during TIMEOUT_LENGTH
+- [x] Instead of upserting the combined transcript, pull factual information from it then upsert
+- [x] Have GPT account for the fact that the transcription may include multiple speakers
+    - Needs further testing to confirm
+- [x] Find out how to send recorded audio directly to Whisper without saving
   - Needs further research
-- [ ] Figure out how to crop out silent portions during TIMEOUT_LENGTH
+  - Can't seem to do it with io.Bytes or converting to numpy array
+- [x] Ensure any existing docs are combined and upserted before deleting full folder
 - [x] Combine multiple small transcript txts into single large then upsert
     - If length of current transcript txt < N characters block upsert and if sum of lengths of previous N transcript txts > N characters then allow upsert
     - Had to change this to time between trasncriptions instead of length

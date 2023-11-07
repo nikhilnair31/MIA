@@ -1,5 +1,6 @@
 # region Packages 
 import os
+import io
 import wave
 import time
 import math
@@ -54,7 +55,7 @@ docs_name_directory = r'.\docs'
 # endregion
 
 # region Class
-class Audio():
+class EARS():
     # Setup objects and APIs
     def __init__(self):
         # Audio Setup
@@ -79,9 +80,11 @@ class Audio():
         self.index = pinecone.Index(INDEX_NAME)
 
         # Clean up folders
+        if(len(os.listdir(docs_name_directory)) > 0):
+            self.load_text()
         self.clearfolders()
 
-    # General
+    # region General
     def clearfolders(self):
         # Delete all recordings
         files = os.listdir(audio_name_directory)
@@ -96,6 +99,22 @@ class Audio():
             file_path = os.path.join(docs_name_directory, file)
             if os.path.isfile(file_path):
                 os.remove(file_path)
+
+        print(f'Cleared Folders!\n')
+
+    @staticmethod
+    def rms(frame):
+        count = len(frame) / SWIDTH
+        format = "%dh" % (count)
+        shorts = struct.unpack(format, frame)
+
+        sum_squares = 0.0
+        for sample in shorts:
+            n = sample * short_normalize
+            sum_squares += n * n
+        rms = math.pow(sum_squares / count, 0.5)
+
+        return rms * 1000
     # endregion
 
     # region OpenAI
@@ -129,21 +148,6 @@ class Audio():
         return response_text
     # endregion
 
-    # Function for calculating volume
-    @staticmethod
-    def rms(frame):
-        count = len(frame) / SWIDTH
-        format = "%dh" % (count)
-        shorts = struct.unpack(format, frame)
-
-        sum_squares = 0.0
-        for sample in shorts:
-            n = sample * short_normalize
-            sum_squares += n * n
-        rms = math.pow(sum_squares / count, 0.5)
-
-        return rms * 1000
-    
     def start_listening(self):
         print(f'Listening...\n')
 
@@ -187,14 +191,13 @@ class Audio():
     def writeaudiofile(self, timestamp, recording):
         filename = os.path.join(audio_name_directory, '{}.wav'.format(timestamp))
 
-        # FIXME: Doesn't really work
         rms_values = [self.rms(frame) for frame in [recording[i:i+CHUNK] for i in range(0, len(recording), CHUNK)]]
         silent_frames = [i for i, rms in enumerate(rms_values) if rms < THRESHOLD]
         if silent_frames:
-            first_silent_frame = silent_frames[0]
-            timeout_frames = int(TIMEOUT_LENGTH / (1.0/RATE))
-            trim_end_frame = min(first_silent_frame + timeout_frames, len(rms_values))
-            trimmed_audio = recording[: trim_end_frame * CHUNK]
+            # getKey function to find last non-silent frame
+            getKey = lambda item: item[0] if item[1] >= THRESHOLD else -1
+            max_valued_item_index = max(enumerate(rms_values), key=getKey)[0]
+            trimmed_audio = recording[: (max_valued_item_index + 1) * CHUNK]
         else:
             trimmed_audio = recording
 
@@ -211,11 +214,27 @@ class Audio():
     def transcribe(self, timestamp, filename):
         print('Transcribing...\n')
 
-        system_prompt = "You are a helpful assistant whose task is to correct any spelling discrepancies in the transcribed text. Only add necessary punctuation and use only the context provided. Respond ONLY with the corrected text but if too much of the content seems erronous return '.'"
-        # system_prompt = f"You will receive a user's transcribed speech and are to process it. DO NOT MAKE any additional content but you may correct errors. Respond ONLY with the corrected text but if too much of the content seems erronous return '.'. Transcription: {transcribe_output}"
+        system_prompt = f"""
+            You will receive a user's transcribed speech and are to process it to correct potential errors. 
+            DO NOT DO THE FOLLOWING:
+            - Generate any additional content 
+            - Censor any of the content
+            - Print repetitive content
+            DO THE FOLLOWING:
+            - Account for transcript include speech of multiple users
+            - Only output corrected text 
+            - If too much of the content seems erronous return '.' 
+            Transcription: 
+        """
 
         transcribe_output = self.whispercall(filename)
-        clean_transcript = self.gpt_chat_call(text=[{"role": "system", "content": system_prompt}], model='gpt-4', temp=0)
+        clean_transcript = self.gpt_chat_call(
+            text=[{
+                "role": "system", 
+                "content": system_prompt + transcribe_output
+            }], 
+            model='gpt-4', temp=0
+        )
         
         if clean_transcript != '.':
             filename = os.path.join(docs_name_directory, f'{timestamp}.txt')
@@ -250,44 +269,55 @@ class Audio():
                 self.load_text()
     
     def load_text(self):
-        # Create a temp file
-        temp_file_path = os.path.join(docs_name_directory, r'-1.txt')
-        with open(temp_file_path, "w") as f:
-            f.write("")
-
-        all_files = os.listdir(docs_name_directory)
-        all_files.sort(key=lambda x: os.path.getctime(os.path.join(docs_name_directory, x)))
+        all_files = sorted(os.listdir(docs_name_directory), key = lambda x: os.path.getctime(os.path.join(docs_name_directory, x)))
         
-        files_to_delete = []
         combined_content = ""
-        for filename in all_files[1:]:
-            file_path = os.path.join(docs_name_directory, filename)
-            with open(file_path, 'r') as file:
+        for filename in all_files:
+            with open(os.path.join(docs_name_directory, filename), 'r') as file:
                 file_content = file.read()
-                combined_content += file_content
-            files_to_delete.append(file_path)
+                print(f'file_content: {file_content[:50]}...')
+                combined_content += file_content + " "
+        
+        facts_from_combined_content = self.gpt_chat_call(
+            text=[{
+                "role": "system", 
+                "content": f"""
+                    You will receive transcribed speech from the environment and are to extract relevant facts from it. 
+                    DO NOT DO THE FOLLOWING:
+                    - Generate any additional content
+                    - Censor any of the content
+                    - Print repetitive content
+                    DO THE FOLLOWING:
+                    - Extract factual statements from the content
+                    - Account for transcript to be from various sources like the user, surrrounding people, video playback in vicinity etc.
+                    - Only output factual text 
+                    - If input content includes multiple topics summarize it 
+                    Content: 
+                    {combined_content}
+                """
+            }], 
+            model='gpt-4', 
+            temp=0.5
+        )
 
         temp_file_path = os.path.join(docs_name_directory, r'-1.txt')
         with open(temp_file_path, 'wb') as outfile:
-            outfile.write(combined_content.encode())
-            print(f'Writing: {combined_content}')
+            outfile.write(facts_from_combined_content.encode())
+            print(f'Writing: {facts_from_combined_content}')
 
         text_splitter = RecursiveCharacterTextSplitter()
         text_loader = TextLoader(temp_file_path)
-        documents = text_loader.load()
-        docs = text_splitter.split_documents(documents)
-        print(f'Loaded data from {len(documents)} and Doc Length: {len(docs)}')
-        
+        docs = text_splitter.split_documents(text_loader.load())
+        print(f'Loaded data from {len(docs)}')
+
         if len(docs) > 0:
             Pinecone.from_documents(docs, self.embeddings, index_name=INDEX_NAME)
             print(f'Upserted doc!\n')
-
-            # Delete the processed files
             self.clearfolders()
         else:
             print(f'Nothing to upsert!\n')
     # endregion
 # endregion
 
-audio = Audio()
-audio.start_listening()
+ears = EARS()
+ears.start_listening()
