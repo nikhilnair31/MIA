@@ -25,9 +25,15 @@ To get started with MIA, follow these steps:
 
 ### MIA
 
+- [ ] Add deep sleep functions
+    - 1. If > N tokens then summarize conversation until now in advance to then directly load on hotword detection
+    - 2. Remind users of upcoming events based on conversations saved or documents retrived
+    - 3. Randomnly ping the user based on what you think they're doing currently
 - [ ] Add logic to upsert relevant data from user 
-- [ ] Update logic for past conversation summary
+- [ ] Update logic for past conversation summary (sumamrize + window)?
 - [ ] Add ability to access the internet
+- [ ] Add user voice recognition
+- [ ] Add voice emotion detection
 - [x] Add ability to put MIA to sleep when not needed
 - [x] Save previous conversations in a vector database to serve as memory
     - No a normal conversation will remain in the JSON. Only factual information about user is to be upserted to PineCone.
@@ -37,11 +43,15 @@ To get started with MIA, follow these steps:
 
 ### EARS
 
+- [ ] Add a function which adds actual date and day information if detetced in transcript
 - [ ] Create knowledge graph from upserted data?
   - Needs further research
+- [ ] Add metadata to documents being upserted
+- [ ] Add a way to pause without stopping script
+- [ ] Figure out how to crop out silent portions during TIMEOUT_LENGTH
 - [ ] Check for error of audio file < 0.1 s
-- [ ] Improve the fact retrieval logic from transcripts
-- [x] Figure out how to crop out silent portions during TIMEOUT_LENGTH
+    - Need to test further
+- [x] Improve the fact retrieval logic from transcripts
 - [x] Instead of upserting the combined transcript, pull factual information from it then upsert
 - [x] Have GPT account for the fact that the transcription may include multiple speakers
     - Needs further testing to confirm

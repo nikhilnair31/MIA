@@ -7,6 +7,7 @@ import math
 import openai
 import struct
 import pyaudio
+import librosa
 import asyncio
 import threading
 import pvporcupine
@@ -191,16 +192,19 @@ class EARS():
     def writeaudiofile(self, timestamp, recording):
         filename = os.path.join(audio_name_directory, '{}.wav'.format(timestamp))
 
-        rms_values = [self.rms(frame) for frame in [recording[i:i+CHUNK] for i in range(0, len(recording), CHUNK)]]
-        silent_frames = [i for i, rms in enumerate(rms_values) if rms < THRESHOLD]
-        if silent_frames:
-            # getKey function to find last non-silent frame
-            getKey = lambda item: item[0] if item[1] >= THRESHOLD else -1
-            max_valued_item_index = max(enumerate(rms_values), key=getKey)[0]
-            trimmed_audio = recording[: (max_valued_item_index + 1) * CHUNK]
-        else:
-            trimmed_audio = recording
+        # rms_values = [self.rms(frame) for frame in [recording[i:i+CHUNK] for i in range(0, len(recording), CHUNK)]]
+        # silent_frames = [i for i, rms in enumerate(rms_values) if rms < THRESHOLD]
+        # if silent_frames:
+        #     # getKey function to find last non-silent frame
+        #     getKey = lambda item: item[0] if item[1] >= THRESHOLD else -1
+        #     max_valued_item_index = max(enumerate(rms_values), key=getKey)[0]
+        #     trimmed_audio = recording[: (max_valued_item_index + 1) * CHUNK]
+        # else:
+        trimmed_audio = recording
 
+        # Calculate the duration of the trimmed audio
+        # trimmed_duration = librosa.get_duration(y=trimmed_audio, sr=RATE)
+        # if trimmed_duration > 2.0:
         wf = wave.open(filename, 'wb')
         wf.setnchannels(CHANNELS)
         wf.setsampwidth(self.p.get_sample_size(audio_format))
@@ -210,6 +214,8 @@ class EARS():
         print(f'Saved Recording! : {filename}\n')
 
         self.transcribe(timestamp, filename)
+        # else:
+            # print(f'Trimmed audio is too short (< 1 second) and will not be saved.\n')
 
     def transcribe(self, timestamp, filename):
         print('Transcribing...\n')
@@ -236,7 +242,7 @@ class EARS():
             model='gpt-4', temp=0
         )
         
-        if clean_transcript != '.':
+        if clean_transcript != '.' and clean_transcript != '"."':
             filename = os.path.join(docs_name_directory, f'{timestamp}.txt')
             with open(filename, "w") as outfile:
                 outfile.write(clean_transcript)
@@ -273,25 +279,27 @@ class EARS():
         
         combined_content = ""
         for filename in all_files:
-            with open(os.path.join(docs_name_directory, filename), 'r') as file:
+            filepath = os.path.join(docs_name_directory, filename)
+            with open(filepath, 'r') as file:
                 file_content = file.read()
-                print(f'file_content: {file_content[:50]}...')
+                print(f'file_content: {file_content[:50]} ...')
                 combined_content += file_content + " "
         
+        first_file_ctime = os.path.getctime(os.path.join(docs_name_directory, all_files[0]))
         facts_from_combined_content = self.gpt_chat_call(
             text=[{
                 "role": "system", 
                 "content": f"""
                     You will receive transcribed speech from the environment and are to extract relevant facts from it. 
+                    DO THE FOLLOWING:
+                    - Extract a single statement about factual information from the content
+                    - Account for transcript to be from various sources like the user, surrrounding people, video playback in vicinity etc.
+                    - Only output factual text 
                     DO NOT DO THE FOLLOWING:
+                    - Generate bullet points
                     - Generate any additional content
                     - Censor any of the content
                     - Print repetitive content
-                    DO THE FOLLOWING:
-                    - Extract factual statements from the content
-                    - Account for transcript to be from various sources like the user, surrrounding people, video playback in vicinity etc.
-                    - Only output factual text 
-                    - If input content includes multiple topics summarize it 
                     Content: 
                     {combined_content}
                 """
@@ -311,7 +319,12 @@ class EARS():
         print(f'Loaded data from {len(docs)}')
 
         if len(docs) > 0:
-            Pinecone.from_documents(docs, self.embeddings, index_name=INDEX_NAME)
+            Pinecone.from_documents(
+                docs, 
+                self.embeddings, 
+                index_name=INDEX_NAME, 
+                # metadata={"file_ctime": first_file_ctime}
+            )
             print(f'Upserted doc!\n')
             self.clearfolders()
         else:

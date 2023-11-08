@@ -30,6 +30,7 @@ main.load_dotenv()
 
 THRESHOLD = float(os.getenv("THRESHOLD"))
 TIMEOUT_LENGTH = float(os.getenv("TIMEOUT_LENGTH"))
+DEEPSLEEPIN = float(os.getenv("DEEPSLEEPIN"))
 CHANNELS = int(os.getenv("CHANNELS"))
 SWIDTH = int(os.getenv("SWIDTH"))
 
@@ -54,7 +55,7 @@ convo_name_directory = r'.\conversations'
 # Conversations
 summarize_context = "The following is your context of the previous conversation with the user: "
 system_context = """
-Your name is MIA and you're an AI companion of the user. Keep your responses short. This is your first boot up and your first interaction with the user so ensure that you ask details about them to remember for the future. This includes things liek their name, job/university, residence etc. Ask anything about them until you think it's enough or they stop you.
+Your name is MIA and you're an AI companion of the user. Keep your responses short. This is your first boot up and your first interaction with the user so ensure that you ask details about them to remember for the future. This includes things like their name, job/university, residence etc. Ask anything about them until you think it's enough or they stop you.
 Internally you have the personality of JARVIS and Chandler Bing combined. You tend to make sarcastic jokes and observations. Do not patronize the user but adapt to how they behave with you.
 You help the user with all their requests, questions and tasks. Be honest and admit if you don't know something when asked. 
 """
@@ -101,12 +102,13 @@ class Audio:
         
         self.elapsed_time = 0
         self.last_audio_time = time.time()
-        self.require_hotword = False
+        self.require_hotword_mia_sleeping = False
+        self.mia_deepsleep = False
 
         # Set up hotword detector
         self.porcupine = pvporcupine.create(
             access_key=PORCUPINE_API_KEY,
-            keyword_paths=[r'models\hey-mia_en_windows_v3_0_0.ppn']
+            keyword_paths=[r'other\hey-mia_en_windows_v3_0_0.ppn']
         )
 
         # Set up recorder
@@ -156,16 +158,22 @@ class Audio:
                 convObj.conversation_context = [{"role": "system", "content": system_context}]
                 self.response(model='gpt-4')
 
-            if self.require_hotword:
+            if self.require_hotword_mia_sleeping:
                 pcm = struct.unpack_from("h" * self.porcupine.frame_length, pcm)
                 keyword_index = self.porcupine.process(pcm)
 
                 if keyword_index >= 0:
                     print("Hotword Detected!\n")
-                    self.require_hotword = False
+                    self.require_hotword_mia_sleeping = False
+                    self.mia_deepsleep = False
                     self.record()
                 else:
                     self.elapsed_time = time.time() - self.last_audio_time
+                    
+                    if self.elapsed_time > DEEPSLEEPIN:
+                        self.mia_deepsleep = True
+                        mia_thoughts = threading.Thread(target=taskObj.thoughts, args=())
+                        mia_thoughts.start()
 
             else:
                 rms_val = self.rms(pcm)
@@ -176,7 +184,7 @@ class Audio:
 
                     if self.elapsed_time >= TIMEOUT_LENGTH:
                         print("Sleeping zzz...\n")
-                        self.require_hotword = True
+                        self.require_hotword_mia_sleeping = True
 
     def record(self):
         print(f'Recording!\n')
@@ -388,6 +396,14 @@ class Tasks:
 
         convObj.conversation_context.append({"role": "assistant", "content": reply})
         asyncio.run(convObj.saveconversation())
+        
+    def thoughts(self):
+        print(f'MIA in Deep Sleep and Thinking...\n')
+
+        while not audioObj.mia_deepsleep:
+            continue
+        
+        pass
 # endregion
 
 # region Main
