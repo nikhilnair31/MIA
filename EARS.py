@@ -9,11 +9,13 @@ import struct
 import pyaudio
 import librosa
 import asyncio
+import keyboard
 import threading
 import pvporcupine
 import numpy as np
 import pandas as pd
 from dotenv import main
+from pynput import keyboard
 from datetime import datetime
 
 import pinecone
@@ -44,6 +46,7 @@ CHUNK = int(os.getenv("CHUNK"))
 RATE = int(os.getenv("RATE"))
 short_normalize = (1.0/32768.0)
 audio_format = pyaudio.paInt16
+PAUSED = False
 
 # API keys
 OPENAI_API_KEY = str(os.getenv("OPENAI_API_KEY"))
@@ -85,6 +88,8 @@ class EARS():
             self.load_text()
         self.clearfolders()
 
+        keyboard.Listener(on_press=self.on_press, on_release=self.on_release).start()
+
     # region General
     def clearfolders(self):
         # Delete all recordings
@@ -102,6 +107,20 @@ class EARS():
                 os.remove(file_path)
 
         print(f'Cleared Folders!\n')
+    
+    def on_press(self, key):
+        global PAUSED
+        try:
+            k = key.char 
+        except:
+            k = key.name
+        if k == 'r':
+            PAUSED = not PAUSED
+            print(f'EARS has been {"PAUSED" if PAUSED else "UNPAUSED"}\n')
+
+    def on_release(self, key):
+        if key == keyboard.Key.esc:      
+            return False
 
     @staticmethod
     def rms(frame):
@@ -150,25 +169,29 @@ class EARS():
     # endregion
 
     def start_listening(self):
-        print(f'Listening...\n')
+        print(f'EARS is Listening...\n')
 
+        global PAUSED
         self.last_audio_time = time.time()
         self.elapsed_time = 0
+
         while True:
             pcm = self.stream.read(CHUNK)
             rms_val = self.rms(pcm)
-            if rms_val > THRESHOLD:
+            if rms_val > THRESHOLD and not PAUSED:
                 asyncio.run(self.record())
 
     async def record(self):
         print(f'Recording!\n')
+
+        global PAUSED
         rec = []
         elapsed_time = 0
         start_time = time.time()
         current = time.time()
         end = time.time() + TIMEOUT_LENGTH
 
-        while current <= end:
+        while current <= end and not PAUSED:
 
             data = self.stream.read(CHUNK)
             if self.rms(data) >= THRESHOLD: end = time.time() + TIMEOUT_LENGTH
@@ -192,19 +215,20 @@ class EARS():
     def writeaudiofile(self, timestamp, recording):
         filename = os.path.join(audio_name_directory, '{}.wav'.format(timestamp))
 
-        # rms_values = [self.rms(frame) for frame in [recording[i:i+CHUNK] for i in range(0, len(recording), CHUNK)]]
-        # silent_frames = [i for i, rms in enumerate(rms_values) if rms < THRESHOLD]
-        # if silent_frames:
-        #     # getKey function to find last non-silent frame
-        #     getKey = lambda item: item[0] if item[1] >= THRESHOLD else -1
-        #     max_valued_item_index = max(enumerate(rms_values), key=getKey)[0]
-        #     trimmed_audio = recording[: (max_valued_item_index + 1) * CHUNK]
-        # else:
-        trimmed_audio = recording
+        rms_values = [self.rms(frame) for frame in [recording[i:i+CHUNK] for i in range(0, len(recording), CHUNK)]]
+        silent_frames = [i for i, rms in enumerate(rms_values) if rms < THRESHOLD]
+        if silent_frames:
+            getKey = lambda item: item[0] if item[1] >= THRESHOLD else -1
+            max_valued_item_index = max(enumerate(rms_values), key=getKey)[0]
+            possible_trimmed_audio = recording[: (max_valued_item_index + 1) * CHUNK]
+            
+            if len(possible_trimmed_audio) >= RATE * 2:
+                trimmed_audio = possible_trimmed_audio
+            else:
+                trimmed_audio = recording
+        else:
+            trimmed_audio = recording
 
-        # Calculate the duration of the trimmed audio
-        # trimmed_duration = librosa.get_duration(y=trimmed_audio, sr=RATE)
-        # if trimmed_duration > 2.0:
         wf = wave.open(filename, 'wb')
         wf.setnchannels(CHANNELS)
         wf.setsampwidth(self.p.get_sample_size(audio_format))
@@ -214,8 +238,6 @@ class EARS():
         print(f'Saved Recording! : {filename}\n')
 
         self.transcribe(timestamp, filename)
-        # else:
-            # print(f'Trimmed audio is too short (< 1 second) and will not be saved.\n')
 
     def transcribe(self, timestamp, filename):
         print('Transcribing...\n')
@@ -285,7 +307,7 @@ class EARS():
                 print(f'file_content: {file_content[:50]} ...')
                 combined_content += file_content + " "
         
-        first_file_ctime = os.path.getctime(os.path.join(docs_name_directory, all_files[0]))
+        first_file_ctime =  time.ctime(os.path.getctime(os.path.join(docs_name_directory, all_files[0])))
         facts_from_combined_content = self.gpt_chat_call(
             text=[{
                 "role": "system", 
@@ -319,13 +341,15 @@ class EARS():
         print(f'Loaded data from {len(docs)}')
 
         if len(docs) > 0:
-            Pinecone.from_documents(
-                docs, 
-                self.embeddings, 
-                index_name=INDEX_NAME, 
-                # metadata={"file_ctime": first_file_ctime}
-            )
+            # Prepare texts and metadatas
+            texts = [d.page_content for d in docs]
+            metadatas = [{"file_ctime": first_file_ctime} for d in docs]
+
+            # Inserting to index
+            Pinecone.from_texts(texts, self.embeddings, index_name=INDEX_NAME, metadatas=metadatas)
+            # Pinecone.from_documents(docs, self.embeddings, index_name=INDEX_NAME)
             print(f'Upserted doc!\n')
+
             self.clearfolders()
         else:
             print(f'Nothing to upsert!\n')

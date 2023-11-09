@@ -46,11 +46,11 @@ To get started with MIA, follow these steps:
 - [ ] Add a function which adds actual date and day information if detetced in transcript
 - [ ] Create knowledge graph from upserted data?
   - Needs further research
-- [ ] Add metadata to documents being upserted
-- [ ] Add a way to pause without stopping script
-- [ ] Figure out how to crop out silent portions during TIMEOUT_LENGTH
-- [ ] Check for error of audio file < 0.1 s
+- [x] Add a way to pause without stopping script
+- [x] Figure out how to crop out silent portions during TIMEOUT_LENGTH
+- [x] Check for error of audio file < 0.1 s
     - Need to test further
+- [x] Add metadata to documents being upserted
 - [x] Improve the fact retrieval logic from transcripts
 - [x] Instead of upserting the combined transcript, pull factual information from it then upsert
 - [x] Have GPT account for the fact that the transcription may include multiple speakers
