@@ -1,4 +1,4 @@
-<img src="./public/logo.gif"  />
+<img src="./other/logo.gif"  />
 
 # MIA (Marvelously Incompetent Assistant)
 
