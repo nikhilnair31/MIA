@@ -36,6 +36,8 @@ def encode_image(image_array):
         img.save(buffer, format='JPEG')
         return base64.b64encode(buffer.getvalue()).decode("utf-8")
 
+system_prompt = "You are MIA an AI companion. You are viewing the world through the user's device. Just make relevant observations."
+
 # Delete all images
 files = os.listdir(image_folder_path)
 for file in files:
@@ -53,9 +55,15 @@ while True:
             model="gpt-4-vision-preview",
             messages=[
                 {
+                    "role": "system",
+                    "content": [
+                        {"type": "text", "text": system_prompt},
+                    ],
+                },
+                {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": "What’s in this image?"},
+                        # {"type": "text", "text": "What’s in this image?"},
                         {
                             "type": "image_url",
                             "image_url": {
@@ -70,6 +78,6 @@ while True:
             max_tokens=100,
         )
 
-        print(response.choices[0])
+        print(f'{response.choices[0].message.content}\n')
     
     time.sleep(10)  # Wait for 5 seconds
