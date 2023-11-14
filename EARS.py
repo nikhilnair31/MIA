@@ -168,6 +168,7 @@ class EARS():
         return response_text
     # endregion
 
+    # region Audio
     def start_listening(self):
         print(f'EARS is Listening...\n')
 
@@ -272,6 +273,7 @@ class EARS():
 
             vectorize_thread = threading.Thread(target=self.filecheck, args=(timestamp, ))
             vectorize_thread.start()
+    # endregion
         
     # region Vector DB
     def filecheck(self, timestamp):
