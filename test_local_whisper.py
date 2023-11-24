@@ -27,6 +27,10 @@ from langchain.document_loaders import TextLoader
 from langchain.embeddings.openai import OpenAIEmbeddings
 from langchain.text_splitter import CharacterTextSplitter, RecursiveCharacterTextSplitter 
 
+import torch
+from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, pipeline
+from datasets import load_dataset
+
 warnings.filterwarnings("ignore", message=".*The 'nopython' keyword*")
 # endregion
 
@@ -123,6 +127,25 @@ class EARS():
         # Start a listener for pause/start of EARS
         keyboard.Listener(on_press=self.on_press, on_release=self.on_release).start()
 
+        device = "cuda:0" if torch.cuda.is_available() else "cpu"
+        torch_dtype = torch.float16 if torch.cuda.is_available() else torch.float32
+        model_id = "distil-whisper/distil-medium.en"
+        model = AutoModelForSpeechSeq2Seq.from_pretrained(
+            model_id, torch_dtype=torch_dtype, low_cpu_mem_usage=True, use_safetensors=True
+        )
+        model = model.to_bettertransformer()
+        model.to(device)
+        processor = AutoProcessor.from_pretrained(model_id)
+        self.pipe = pipeline(
+            "automatic-speech-recognition",
+            model=model,
+            tokenizer=processor.tokenizer,
+            feature_extractor=processor.feature_extractor,
+            max_new_tokens=128,
+            torch_dtype=torch_dtype,
+            device=device,
+        )
+
     # region General
     def clearfolders(self):
         # Delete all recordings
@@ -172,14 +195,8 @@ class EARS():
     # region OpenAI
     def whispercall(self, filename):
         print('Making Whisper request..\n')
-
-        audio_file= open(filename, "rb")
-        transcript = openai.Audio.transcribe(
-            "whisper-1", 
-            audio_file, 
-            language="en",
-            prompt=whisper_prompt
-        )
+        
+        transcript = self.pipe(filename)
         transcript_text = transcript["text"]
         print(f'{"="*50}\nTranscript: {transcript_text}\n{"="*50}\n')
         
