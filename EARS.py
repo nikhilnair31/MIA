@@ -32,18 +32,18 @@ main.load_dotenv()
 
 # DB Related Vars
 INDEX_NAME = os.getenv("INDEX_NAME")
-CHUNK_SIZE = int(os.getenv("CHUNK_SIZE"))
-CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP"))
-SPEECH_GAP_DELAY = int(os.getenv("SPEECH_GAP_DELAY"))
+AUDIO_CHUNK_SIZE = int(os.getenv("AUDIO_CHUNK_SIZE"))
+AUDIO_CHUNK_OVERLAP = int(os.getenv("AUDIO_CHUNK_OVERLAP"))
+SPEECH_GAP_DELAY_IN_SEC = int(os.getenv("SPEECH_GAP_DELAY_IN_SEC"))
 
 # Audio Related Vars
-MAX_REC_TIME = int(os.getenv("MAX_REC_TIME"))
-THRESHOLD = float(os.getenv("THRESHOLD"))
-TIMEOUT_LENGTH = float(os.getenv("TIMEOUT_LENGTH"))
-CHANNELS = int(os.getenv("CHANNELS"))
-SWIDTH = int(os.getenv("SWIDTH"))
-CHUNK = int(os.getenv("CHUNK"))
-RATE = int(os.getenv("RATE"))
+MAX_AUDIO_REC_TIME_IN_MIN = int(os.getenv("MAX_AUDIO_REC_TIME_IN_MIN"))
+AUDIO_THRESHOLD = float(os.getenv("AUDIO_THRESHOLD"))
+AUDIO_TIMEOUT_LENGTH = float(os.getenv("AUDIO_TIMEOUT_LENGTH"))
+AUDIO_CHANNELS = int(os.getenv("AUDIO_CHANNELS"))
+AUDIO_SWIDTH = int(os.getenv("AUDIO_SWIDTH"))
+AUDIO_CHUNK = int(os.getenv("AUDIO_CHUNK"))
+AUDIO_RATE = int(os.getenv("AUDIO_RATE"))
 short_normalize = (1.0/32768.0)
 audio_format = pyaudio.paInt16
 PAUSED = False
@@ -56,6 +56,33 @@ PINECONE_ENV = str(os.getenv("PINECONE_ENV_KEY"))
 # Folder paths
 audio_name_directory = r'.\audio'
 docs_name_directory = r'.\docs'
+
+# System Prompts
+transcribe_system_prompt = f"""
+    You will receive a user's transcribed speech and are to process it to correct potential errors. 
+    DO NOT DO THE FOLLOWING:
+    - Generate any additional content 
+    - Censor any of the content
+    - Print repetitive content
+    DO THE FOLLOWING:
+    - Account for transcript include speech of multiple users
+    - Only output corrected text 
+    - If too much of the content seems erronous return '.' 
+    Transcription: 
+"""
+facts_system_prompt = f"""
+    You will receive transcribed speech from the environment and are to extract relevant facts from it. 
+    DO THE FOLLOWING:
+    - Extract a single statement about factual information from the content
+    - Account for transcript to be from various sources like the user, surrrounding people, video playback in vicinity etc.
+    - Only output factual text 
+    DO NOT DO THE FOLLOWING:
+    - Generate bullet points
+    - Generate any additional content
+    - Censor any of the content
+    - Print repetitive content
+    Content: 
+"""
 # endregion
 
 # region Class
@@ -63,14 +90,14 @@ class EARS():
     # Setup objects and APIs
     def __init__(self):
         # Audio Setup
-        self.max_record_time = MAX_REC_TIME * 60
+        self.max_record_time = MAX_AUDIO_REC_TIME_IN_MIN * 60
         self.p = pyaudio.PyAudio()
         self.stream = self.p.open(
             format=audio_format,
-            channels=CHANNELS,
-            rate=RATE,
+            channels=AUDIO_CHANNELS,
+            rate=AUDIO_RATE,
             input=True,
-            frames_per_buffer=CHUNK
+            frames_per_buffer=AUDIO_CHUNK
         )
 
         # OpenAI Setup
@@ -83,11 +110,11 @@ class EARS():
         pinecone.init(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
         self.index = pinecone.Index(INDEX_NAME)
 
-        # Clean up folders
+        # If transcript files exist then load them into vector DB first
         if(len(os.listdir(docs_name_directory)) > 0):
             self.load_text()
-        self.clearfolders()
 
+        # Start a listener for pause/start of EARS
         keyboard.Listener(on_press=self.on_press, on_release=self.on_release).start()
 
     # region General
@@ -117,14 +144,13 @@ class EARS():
         if k == 'r':
             PAUSED = not PAUSED
             print(f'EARS has been {"PAUSED" if PAUSED else "UNPAUSED"}\n')
-
     def on_release(self, key):
         if key == keyboard.Key.esc:      
             return False
 
     @staticmethod
     def rms(frame):
-        count = len(frame) / SWIDTH
+        count = len(frame) / AUDIO_SWIDTH
         format = "%dh" % (count)
         shorts = struct.unpack(format, frame)
 
@@ -177,9 +203,9 @@ class EARS():
         self.elapsed_time = 0
 
         while True:
-            pcm = self.stream.read(CHUNK)
+            pcm = self.stream.read(AUDIO_CHUNK)
             rms_val = self.rms(pcm)
-            if rms_val > THRESHOLD and not PAUSED:
+            if rms_val > AUDIO_THRESHOLD and not PAUSED:
                 asyncio.run(self.record())
 
     async def record(self):
@@ -190,12 +216,12 @@ class EARS():
         elapsed_time = 0
         start_time = time.time()
         current = time.time()
-        end = time.time() + TIMEOUT_LENGTH
+        end = time.time() + AUDIO_TIMEOUT_LENGTH
 
         while current <= end and not PAUSED:
 
-            data = self.stream.read(CHUNK)
-            if self.rms(data) >= THRESHOLD: end = time.time() + TIMEOUT_LENGTH
+            data = self.stream.read(AUDIO_CHUNK)
+            if self.rms(data) >= AUDIO_THRESHOLD: end = time.time() + AUDIO_TIMEOUT_LENGTH
 
             current = time.time()
             rec.append(data)
@@ -214,79 +240,78 @@ class EARS():
         writeaudiofile_thread.start()
     
     def writeaudiofile(self, timestamp, recording):
-        filename = os.path.join(audio_name_directory, '{}.wav'.format(timestamp))
+        # Get RMS values of all frames in audio
+        rms_values = [self.rms(frame) for frame in [recording[i:i+AUDIO_CHUNK] for i in range(0, len(recording), AUDIO_CHUNK)]]
 
-        rms_values = [self.rms(frame) for frame in [recording[i:i+CHUNK] for i in range(0, len(recording), CHUNK)]]
-        silent_frames = [i for i, rms in enumerate(rms_values) if rms < THRESHOLD]
+        # Find all silent frames (RMS < threshold) to then trim audio
+        silent_frames = [i for i, rms in enumerate(rms_values) if rms < AUDIO_THRESHOLD]
         if silent_frames:
-            getKey = lambda item: item[0] if item[1] >= THRESHOLD else -1
+            getKey = lambda item: item[0] if item[1] >= AUDIO_THRESHOLD else -1
             max_valued_item_index = max(enumerate(rms_values), key=getKey)[0]
-            possible_trimmed_audio = recording[: (max_valued_item_index + 1) * CHUNK]
+            possible_trimmed_audio = recording[: (max_valued_item_index + 1) * AUDIO_CHUNK]
             
-            if len(possible_trimmed_audio) >= RATE * 2:
+            if len(possible_trimmed_audio) >= AUDIO_RATE * 2:
                 trimmed_audio = possible_trimmed_audio
             else:
                 trimmed_audio = recording
         else:
             trimmed_audio = recording
 
-        wf = wave.open(filename, 'wb')
-        wf.setnchannels(CHANNELS)
+        # Write audio data to file
+        audio_filename = os.path.join(audio_name_directory, '{}.wav'.format(timestamp))
+        wf = wave.open(audio_filename, 'wb')
+        wf.setnchannels(AUDIO_CHANNELS)
         wf.setsampwidth(self.p.get_sample_size(audio_format))
-        wf.setframerate(RATE)
+        wf.setframerate(AUDIO_RATE)
         wf.writeframes(trimmed_audio)
         wf.close()
-        print(f'Saved Recording! : {filename}\n')
+        print(f'Saved Recording! : {audio_filename}\n')
 
-        self.transcribe(timestamp, filename)
+        # Transcribe audio file saved above
+        self.transcribe(timestamp, audio_filename)
 
-    def transcribe(self, timestamp, filename):
+    def transcribe(self, timestamp, audio_filename):
         print('Transcribing...\n')
 
-        system_prompt = f"""
-            You will receive a user's transcribed speech and are to process it to correct potential errors. 
-            DO NOT DO THE FOLLOWING:
-            - Generate any additional content 
-            - Censor any of the content
-            - Print repetitive content
-            DO THE FOLLOWING:
-            - Account for transcript include speech of multiple users
-            - Only output corrected text 
-            - If too much of the content seems erronous return '.' 
-            Transcription: 
-        """
-
-        transcribe_output = self.whispercall(filename)
+        # Get transcribe of audio file and clean it
+        transcribe_output = self.whispercall(audio_filename)
         clean_transcript = self.gpt_chat_call(
             text=[{
                 "role": "system", 
-                "content": system_prompt + transcribe_output
+                "content": transcribe_system_prompt + transcribe_output
             }], 
             model='gpt-4', temp=0
         )
         
+        # If errors in transcription then may return punctuation is various quotes so skip those
         if clean_transcript != '.' and clean_transcript != '"."':
-            filename = os.path.join(docs_name_directory, f'{timestamp}.txt')
-            with open(filename, "w") as outfile:
+            # Save cleaned transcribe into new file
+            transcript_filename = os.path.join(docs_name_directory, f'{timestamp}.txt')
+            with open(transcript_filename, "w") as outfile:
                 outfile.write(clean_transcript)
-            print(f'Saved Transcript! : {filename}\n')
+            print(f'Saved Transcript! : {transcript_filename}\n')
 
+            # Create new thread to check if transcripts are part of same conversation
             vectorize_thread = threading.Thread(target=self.filecheck, args=(timestamp, ))
             vectorize_thread.start()
     # endregion
         
     # region Vector DB
     def filecheck(self, timestamp):
+        # Getting path of latest file
         latestfilename = os.path.join(docs_name_directory, f'{timestamp}.txt')
+        # Getting all trasncript files sorted by descding (most recent first)
         all_files = os.listdir(docs_name_directory)
         all_files.sort(key=lambda x: os.path.getctime(os.path.join(docs_name_directory, x)), reverse=True)
 
+        # If more than 2 files in transcipt folder, taking index 1 since index 0 is temp file with combined transcripts
         lastfilename = None
         if len(all_files) > 2:
             lastfilename = all_files[1]
         else:
             print("No files found in the folder.\n")
 
+        # Calculating time gap to check if transcripts are part of same conversation
         if lastfilename is None:
             print("No files found in the folder.\n")
         else:
@@ -295,12 +320,17 @@ class EARS():
             time_gap = int((specific_file_creation_time - first_file_creation_time).total_seconds())
             print(f"Time gap from '{lastfilename}' to '{latestfilename}': {time_gap}\n")
             
-            if time_gap > SPEECH_GAP_DELAY:
+            # If not then upsert to vector DB
+            if time_gap > SPEECH_GAP_DELAY_IN_SEC:
                 self.load_text()
     
     def load_text(self):
+        # Get all transcript files in ascending order of creation time
         all_files = sorted(os.listdir(docs_name_directory), key = lambda x: os.path.getctime(os.path.join(docs_name_directory, x)))
+        # Get time of creation for 1st transcript file
+        first_file_ctime =  time.ctime(os.path.getctime(os.path.join(docs_name_directory, all_files[0])))
         
+        # Append contents of all transcript files into one variable
         combined_content = ""
         for filename in all_files:
             filepath = os.path.join(docs_name_directory, filename)
@@ -309,34 +339,22 @@ class EARS():
                 print(f'file_content: {file_content[:50]} ...')
                 combined_content += file_content + " "
         
-        first_file_ctime =  time.ctime(os.path.getctime(os.path.join(docs_name_directory, all_files[0])))
+        # Pull factual information from all transcripts
         facts_from_combined_content = self.gpt_chat_call(
             text=[{
                 "role": "system", 
-                "content": f"""
-                    You will receive transcribed speech from the environment and are to extract relevant facts from it. 
-                    DO THE FOLLOWING:
-                    - Extract a single statement about factual information from the content
-                    - Account for transcript to be from various sources like the user, surrrounding people, video playback in vicinity etc.
-                    - Only output factual text 
-                    DO NOT DO THE FOLLOWING:
-                    - Generate bullet points
-                    - Generate any additional content
-                    - Censor any of the content
-                    - Print repetitive content
-                    Content: 
-                    {combined_content}
-                """
+                "content": facts_system_prompt + combined_content
             }], 
-            model='gpt-4', 
-            temp=0.5
+            model='gpt-4', temp=0.5
         )
 
+        # Write above info into a temp file
         temp_file_path = os.path.join(docs_name_directory, r'-1.txt')
         with open(temp_file_path, 'wb') as outfile:
             outfile.write(facts_from_combined_content.encode())
             print(f'Writing: {facts_from_combined_content}')
 
+        # Split and create Docs and load
         text_splitter = RecursiveCharacterTextSplitter()
         text_loader = TextLoader(temp_file_path)
         docs = text_splitter.split_documents(text_loader.load())
@@ -349,12 +367,12 @@ class EARS():
 
             # Inserting to index
             Pinecone.from_texts(texts, self.embeddings, index_name=INDEX_NAME, metadatas=metadatas)
-            # Pinecone.from_documents(docs, self.embeddings, index_name=INDEX_NAME)
             print(f'Upserted doc!\n')
-
-            self.clearfolders()
         else:
             print(f'Nothing to upsert!\n')
+
+        # Clean up folders
+        self.clearfolders()
     # endregion
 # endregion
 
