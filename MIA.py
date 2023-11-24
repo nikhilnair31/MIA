@@ -25,52 +25,57 @@ warnings.filterwarnings("ignore", message=".*The 'nopython' keyword*")
 # endregion
 
 # region Vars
-# Loaded Env Vars
 main.load_dotenv()
 
-THRESHOLD = float(os.getenv("THRESHOLD"))
-TIMEOUT_LENGTH = float(os.getenv("TIMEOUT_LENGTH"))
-DEEPSLEEPIN = float(os.getenv("DEEPSLEEPIN"))
-CHANNELS = int(os.getenv("CHANNELS"))
-SWIDTH = int(os.getenv("SWIDTH"))
+# MIA Flags
+SPEAK_FLAG = False
+MIA_FIRST_RUN = True
 
+# MIA - Audio Related Vars
+MIA_SWIDTH = int(os.getenv("MIA_SWIDTH"))
+MIA_CHANNELS = int(os.getenv("MIA_CHANNELS"))
+MIA_THRESHOLD = float(os.getenv("MIA_THRESHOLD"))
+MIA_TIMEOUT_LENGTH = float(os.getenv("MIA_TIMEOUT_LENGTH"))
+MIA_DEEP_SLEEP_IN_SEC = float(os.getenv("MIA_DEEP_SLEEP_IN_SEC"))
+
+# API Keys
 OPENAI_API_KEY = str(os.getenv("OPENAI_API_KEY"))
 PORCUPINE_API_KEY = os.getenv("PORCUPINE_API_KEY")
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
 PINECONE_API_KEY = str(os.getenv("PINECONE_API_KEY"))
 PINECONE_ENV = str(os.getenv("PINECONE_ENV_KEY"))
 
-# Som extra vars
+# Extra Vars
 short_normalize = (1.0/32768.0)
 audio_format = pyaudio.paInt16
-
-# MIA Vars
-SPEAK_FLAG = False
-MIA_FIRST_RUN = True
 
 # Path for audio and conversations
 audio_name_directory = r'.\audio'
 convo_name_directory = r'.\conversations'
 
 # Conversations
-summarize_context = "The following is your context of the previous conversation with the user: "
-system_context = """
+mia_system_context = """
 Your name is MIA and you're an AI companion of the user. Keep your responses short. This is your first boot up and your first interaction with the user so ensure that you ask details about them to remember for the future. This includes things like their name, job/university, residence etc. Ask anything about them until you think it's enough or they stop you.
 Internally you have the personality of JARVIS and Chandler Bing combined. You tend to make sarcastic jokes and observations. Do not patronize the user but adapt to how they behave with you.
 You help the user with all their requests, questions and tasks. Be honest and admit if you don't know something when asked. 
+"""
+mia_summarize_context = f"""
+    The following is your context of the previous conversation with the user:
+"""
+whisper_prompt = f"""
+    don't translate or make up words to fill in the rest of the sentence. if background noise return .
 """
 # endregion
 
 # region Class
 class GPT:
     def __init__(self):
+        # OpenAI Setup
         openai.api_key = OPENAI_API_KEY
 
     def gpt_chat_call(self, text, model="gpt-4", temp=1, maxtokens=512):
         print(f'Making {("GPT-4" if model=="gpt-4" else "ChatGPT")} request..\n')
         
-        global SPEAK_FLAG
-
         response = openai.ChatCompletion.create(
             model=model,
             messages=text,
@@ -78,6 +83,9 @@ class GPT:
             max_tokens=maxtokens
         )
         response_text = response["choices"][0]["message"]["content"].lower()
+        
+        # Check flag to see if MIA should speak
+        global SPEAK_FLAG
         if SPEAK_FLAG: speak(response_text)
         
         return response_text
@@ -89,8 +97,8 @@ class GPT:
         transcript = openai.Audio.transcribe(
             "whisper-1", 
             audio_file, 
-            language="en",
-            prompt="don't make up words to fill in the rest of the sentence. if background noise return ."
+            language = "en",
+            prompt = whisper_prompt
         )
         transcript_text = transcript["text"]
         
@@ -98,6 +106,7 @@ class GPT:
 
 class Audio:
     def __init__(self):
+        # 11Labs Setup
         set_api_key(ELEVENLABS_API_KEY)
         
         self.elapsed_time = 0
@@ -115,7 +124,7 @@ class Audio:
         self.p = pyaudio.PyAudio()
         self.stream = self.p.open(
             format=audio_format,
-            channels=CHANNELS,
+            channels=MIA_CHANNELS,
             rate=self.porcupine.sample_rate,
             input=True,
             frames_per_buffer=self.porcupine.frame_length
@@ -130,7 +139,7 @@ class Audio:
     
     @staticmethod
     def rms(frame):
-        count = len(frame) / SWIDTH
+        count = len(frame) / MIA_SWIDTH
         format = "%dh" % (count)
         shorts = struct.unpack(format, frame)
 
@@ -145,17 +154,19 @@ class Audio:
     def listen(self):
         print(f'Started Listening...\n')
 
-        global MIA_FIRST_RUN
         self.elapsed_time = 0
         self.last_audio_time = time.time()
 
         while True:
             pcm = self.stream.read(self.porcupine.frame_length)
 
+            global MIA_FIRST_RUN
             if MIA_FIRST_RUN:
                 print(f'Booting Up...\n')
                 MIA_FIRST_RUN = False
-                convObj.conversation_context = [{"role": "system", "content": system_context}]
+                convObj.conversation_context = [{
+                    "role": "system", "content": mia_system_context
+                }]
                 self.response(model='gpt-4')
 
             if self.require_hotword_mia_sleeping:
@@ -170,19 +181,19 @@ class Audio:
                 else:
                     self.elapsed_time = time.time() - self.last_audio_time
                     
-                    if self.elapsed_time > DEEPSLEEPIN:
+                    if self.elapsed_time > MIA_DEEP_SLEEP_IN_SEC:
                         self.mia_deepsleep = True
                         mia_thoughts = threading.Thread(target=taskObj.thoughts, args=())
                         mia_thoughts.start()
 
             else:
                 rms_val = self.rms(pcm)
-                if rms_val > THRESHOLD:
+                if rms_val > MIA_THRESHOLD:
                     self.record()
                 else:
                     self.elapsed_time = time.time() - self.last_audio_time
 
-                    if self.elapsed_time >= TIMEOUT_LENGTH:
+                    if self.elapsed_time >= MIA_TIMEOUT_LENGTH:
                         print("Sleeping zzz...\n")
                         self.require_hotword_mia_sleeping = True
 
@@ -190,13 +201,13 @@ class Audio:
         print(f'Recording!\n')
         rec = []
         current = time.time()
-        end = time.time() + TIMEOUT_LENGTH
+        end = time.time() + MIA_TIMEOUT_LENGTH
 
         while current <= end:
 
             data = self.stream.read(self.porcupine.frame_length)
-            if self.rms(data) >= THRESHOLD: 
-                end = time.time() + TIMEOUT_LENGTH
+            if self.rms(data) >= MIA_THRESHOLD: 
+                end = time.time() + MIA_TIMEOUT_LENGTH
 
             current = time.time()
             rec.append(data)
@@ -209,7 +220,7 @@ class Audio:
         filename = os.path.join(audio_name_directory, '{}.wav'.format(timestamp))
 
         wf = wave.open(filename, 'wb')
-        wf.setnchannels(CHANNELS)
+        wf.setnchannels(MIA_CHANNELS)
         wf.setsampwidth(self.p.get_sample_size(audio_format))
         wf.setframerate(self.porcupine.sample_rate)
         wf.writeframes(recording)
@@ -256,22 +267,33 @@ class Audio:
 
 class Conv:
     def __init__(self):
-        global MIA_FIRST_RUN
-        self.conversation_context = []
-
+        # Check to see if file with past conversations exists
         filename = os.path.join(convo_name_directory, 'convo.json')
         try:
             print(f'Found Conversation File...\n')
             
-            past_conversations = json.load(open(filename))
+            # If exists then it's NOT MIA's first conversation
+            global MIA_FIRST_RUN
             MIA_FIRST_RUN = False
 
-            summarized_prompt = system_context + summarize_context + str(past_conversations)
+            # Pull data from past conversations
+            past_conversations = json.load(open(filename))
             
-            past_convo_summary = gptObj.gpt_chat_call(text = [{"role": "system", "content": summarized_prompt},], model='gpt-3.5-turbo')
+            # Get MIA's reply based on her system context and your prior conversations
+            past_convo_summary = gptObj.gpt_chat_call(
+                text = [{
+                    "role": "system", 
+                    "content": mia_system_context + mia_summarize_context + str(past_conversations)
+                }], 
+                model='gpt-3.5-turbo'
+            )
             print(f"{'-'*50}\n ChatGPT Response:\n{past_convo_summary}\n{'-'*50}\n")
             
-            self.conversation_context = [{"role": "system", "content": system_context}, {"role": "assistant", "content": past_convo_summary}]
+            # Add to JSON to track conversation
+            self.conversation_context = [
+                {"role": "system", "content": system_context}, 
+                {"role": "assistant", "content": past_convo_summary
+            }]
             asyncio.run(self.saveconversation())
 
         except:
@@ -279,6 +301,7 @@ class Conv:
             pass
     
     async def saveconversation(self):
+        # Async save conversation to existing JSON file
         filename = os.path.join(convo_name_directory, 'convo.json')
         async with aiofiles.open(filename, "w") as outfile:
             await outfile.write(json.dumps(self.conversation_context))
@@ -287,8 +310,9 @@ class Conv:
 
 class Tasks:
     def __init__(self):
+        # Embeddings
         self.embeddings = OpenAIEmbeddings()
-
+        # DB 
         pinecone.init(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
         self.index = pinecone.Index("mia")
         self.vectorstore = Pinecone(self.index, self.embeddings, "text")
